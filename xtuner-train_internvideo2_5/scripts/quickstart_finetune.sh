@@ -49,6 +49,7 @@ fi
 echo -e "\n[Step 3/5] Checking model..."
 MODEL_PATH="OpenGVLab/InternVideo2_5-Chat-8B"
 echo "Model: $MODEL_PATH"
+echo "Alternative: OpenGVLab/InternVL-2-5-HiCo-R16"
 echo "Note: Model will be downloaded from HuggingFace if not cached locally."
 
 # Step 4: Confirm to proceed

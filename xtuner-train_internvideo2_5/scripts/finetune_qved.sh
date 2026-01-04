@@ -11,7 +11,10 @@ export CUDA_VISIBLE_DEVICES=0  # Single GPU
 export TOKENIZERS_PARALLELISM=false
 
 # Model Configuration
-MODEL_NAME="OpenGVLab/InternVideo2_5-Chat-8B"  # or your local path
+# Choose one of these models:
+# - OpenGVLab/InternVideo2_5-Chat-8B (Recommended for video understanding)
+# - OpenGVLab/InternVL-2-5-HiCo-R16 (Alternative with high-quality features)
+MODEL_NAME="OpenGVLab/InternVideo2_5-Chat-8B"
 WORK_DIR="work_dirs/qevd_fit_300k_internvideo2_5_r16"
 
 # Create output directory

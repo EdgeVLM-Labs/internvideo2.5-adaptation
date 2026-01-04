@@ -31,6 +31,9 @@ pip install -e .
 
 # Install additional requirements
 pip install -r requirements.txt
+
+# Install opencv-python for dynamic video duration extraction
+pip install opencv-python
 ```
 
 ### Hardware Requirements
@@ -148,7 +151,10 @@ Check the JSONL format (see `data/annotaions/qevd_fit_300k_example.jsonl`):
 Key parameters:
 
 ```bash
+# Choose your model (default: InternVideo2_5-Chat-8B)
 MODEL_NAME="OpenGVLab/InternVideo2_5-Chat-8B"
+# Alternative: MODEL_NAME="OpenGVLab/InternVL-2-5-HiCo-R16"
+
 MICRO_BATCH_SIZE=1          # Per-device batch size
 GLOBAL_BATCH_SIZE=8         # Total effective batch size
 EPOCHS=3                     # Training epochs

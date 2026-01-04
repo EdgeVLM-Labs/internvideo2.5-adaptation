@@ -4,6 +4,14 @@ import random
 from collections import defaultdict
 from pathlib import Path
 
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
+    print("Warning: opencv-python not installed. Using default duration of 30.0s.")
+    print("Install with: pip install opencv-python")
+
 # Paths
 BASE_DIR = Path('dataset')
 FINE_LABELS_JSON = BASE_DIR / 'ground_truth.json'
@@ -19,6 +27,39 @@ TRAIN_RATIO = 0.60
 VAL_RATIO = 0.20
 TEST_RATIO = 0.20
 RANDOM_SEED = 42  # For reproducibility
+
+
+def get_video_duration(video_path):
+    """Get video duration in seconds using OpenCV.
+
+    Args:
+        video_path: Path to video file
+
+    Returns:
+        float: Video duration in seconds, or 30.0 if unable to read
+    """
+    if not HAS_CV2:
+        return 30.0
+
+    try:
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            print(f"Warning: Could not open video {video_path}, using default duration 30.0s")
+            return 30.0
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        cap.release()
+
+        if fps > 0:
+            duration = frame_count / fps
+            return round(duration, 2)
+        else:
+            print(f"Warning: Invalid FPS for {video_path}, using default duration 30.0s")
+            return 30.0
+    except Exception as e:
+        print(f"Warning: Error reading video {video_path}: {e}, using default duration 30.0s")
+        return 30.0
 
 
 def main():
@@ -88,6 +129,10 @@ def main():
 
         user_prompt = USER_PROMPT_TEMPLATE  # No longer using exercise name in prompt
 
+        # Get actual video duration
+        full_video_file_path = BASE_DIR / relative_video_path
+        video_duration = get_video_duration(full_video_file_path)
+
         output_data.append({
             'video':
             relative_video_path,
@@ -98,6 +143,7 @@ def main():
                 'from': 'gpt',
                 'value': assistant_answer
             }],
+            'duration': video_duration,
             'split':
             'train'  # Will be updated during split
         })
@@ -127,18 +173,14 @@ def main():
     # Write output JSONLs (one JSON object per line)
     OUTPUT_TRAIN_JSONL.parent.mkdir(parents=True, exist_ok=True)
 
-    # Add duration field (estimate based on average video length)
-    # You should update this with actual video durations
+    # Remove split field, not needed in JSONL (duration already set)
     for item in train_data:
-        item['duration'] = 30.0  # Default duration in seconds
-        del item['split']  # Remove split field, not needed in JSONL
+        del item['split']
 
     for item in val_data:
-        item['duration'] = 30.0
         del item['split']
 
     for item in test_data:
-        item['duration'] = 30.0
         del item['split']
 
     with open(OUTPUT_TRAIN_JSONL, 'w') as f:
@@ -173,8 +215,11 @@ def main():
     print(f'  Val:   {OUTPUT_VAL_JSONL}')
     print(f'  Test:  {OUTPUT_TEST_JSONL}')
     print(f"{'='*60}")
-    print(f'\nNote: Duration set to 30.0s by default.')
-    print(f'Update with actual video durations for better training.')
+    if HAS_CV2:
+        print(f'\nNote: Video durations extracted dynamically from video files.')
+    else:
+        print(f'\nNote: opencv-python not available, using default duration of 30.0s.')
+        print(f'For accurate durations, install: pip install opencv-python')
 
 
 if __name__ == '__main__':
