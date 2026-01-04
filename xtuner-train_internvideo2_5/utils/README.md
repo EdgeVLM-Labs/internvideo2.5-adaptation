@@ -6,20 +6,20 @@ This folder contains utility scripts for dataset preparation, model training, in
 
 - [Utils - Mobile-VideoGPT Utilities](#utils---mobile-videogpt-utilities)
   - [Table of Contents](#table-of-contents)
-  - [Inference \& Evaluation](#inference--evaluation)
-    - [infer\_qved.py](#infer_qvedpy)
-    - [test\_inference.py](#test_inferencepy)
-    - [generate\_test\_report.py](#generate_test_reportpy)
+  - [Inference & Evaluation](#inference--evaluation)
+    - [infer_qved.py](#infer_qvedpy)
+    - [test_inference.py](#test_inferencepy)
+    - [generate_test_report.py](#generate_test_reportpy)
   - [Model Deployment](#model-deployment)
-    - [hf\_upload.py](#hf_uploadpy)
+    - [hf_upload.py](#hf_uploadpy)
   - [Training Visualization](#training-visualization)
-    - [plot\_training\_stats.py](#plot_training_statspy)
+    - [plot_training_stats.py](#plot_training_statspy)
   - [Dataset Preparation](#dataset-preparation)
-    - [load\_dataset.py](#load_datasetpy)
-    - [qved\_from\_fine\_labels.py](#qved_from_fine_labelspy)
-    - [filter\_ground\_truth.py](#filter_ground_truthpy)
-    - [clean\_dataset.py](#clean_datasetpy)
-    - [motion\_classifier.py](#motion_classifierpy)
+    - [load_dataset.py](#load_datasetpy)
+    - [qved_from_fine_labels.py](#qved_from_fine_labelspy)
+    - [filter_ground_truth.py](#filter_ground_truthpy)
+    - [clean_dataset.py](#clean_datasetpy)
+    - [motion_classifier.py](#motion_classifierpy)
   - [Linked Scripts](#linked-scripts)
     - [`scripts/quickstart_finetune.sh`](#scriptsquickstart_finetunesh)
     - [`scripts/run_inference.sh`](#scriptsrun_inferencesh)
@@ -31,14 +31,15 @@ This folder contains utility scripts for dataset preparation, model training, in
 **Purpose:** Run single video inference using a finetuned Mobile-VideoGPT model.
 
 **Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--model_path` | str | `Amshaker/Mobile-VideoGPT-0.5B` | Path to model (HuggingFace ID or local checkpoint) |
-| `--video_path` | str | `sample_videos/00000340.mp4` | Path to input video file |
-| `--prompt` | str | Physiotherapy evaluation prompt | Custom prompt for the model |
-| `--device` | str | `cuda` | Device to run inference (`cuda`/`cpu`) |
-| `--max_new_tokens` | int | `512` | Maximum new tokens to generate |
-| `--base_model` | str | `Amshaker/Mobile-VideoGPT-0.5B` | Base model for LoRA adapters |
+
+| Argument           | Type | Default                         | Description                                        |
+| ------------------ | ---- | ------------------------------- | -------------------------------------------------- |
+| `--model_path`     | str  | `Amshaker/Mobile-VideoGPT-0.5B` | Path to model (HuggingFace ID or local checkpoint) |
+| `--video_path`     | str  | `sample_videos/00000340.mp4`    | Path to input video file                           |
+| `--prompt`         | str  | Physiotherapy evaluation prompt | Custom prompt for the model                        |
+| `--device`         | str  | `cuda`                          | Device to run inference (`cuda`/`cpu`)             |
+| `--max_new_tokens` | int  | `512`                           | Maximum new tokens to generate                     |
+| `--base_model`     | str  | `Amshaker/Mobile-VideoGPT-0.5B` | Base model for LoRA adapters                       |
 
 **Sample Commands:**
 
@@ -64,16 +65,17 @@ python utils/infer_qved.py \
 **Purpose:** Run batch inference on the QVED test set and save predictions to JSON.
 
 **Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--model_path` | str | _required_ | Path to finetuned model checkpoint |
-| `--test_json` | str | `dataset/qved_test.json` | Path to test set JSON |
-| `--data_path` | str | `dataset` | Base path for video files |
-| `--output` | str | Model directory | Output file for predictions |
-| `--device` | str | `cuda` | Device to use (`cuda`/`cpu`) |
-| `--max_new_tokens` | int | `64` | Maximum new tokens to generate |
-| `--base_model` | str | `Amshaker/Mobile-VideoGPT-0.5B` | Base model for LoRA adapters |
-| `--limit` | int | `None` | Limit samples to process (for testing) |
+
+| Argument           | Type | Default                         | Description                            |
+| ------------------ | ---- | ------------------------------- | -------------------------------------- |
+| `--model_path`     | str  | _required_                      | Path to finetuned model checkpoint     |
+| `--test_json`      | str  | `dataset/qved_test.json`        | Path to test set JSON                  |
+| `--data_path`      | str  | `dataset`                       | Base path for video files              |
+| `--output`         | str  | Model directory                 | Output file for predictions            |
+| `--device`         | str  | `cuda`                          | Device to use (`cuda`/`cpu`)           |
+| `--max_new_tokens` | int  | `64`                            | Maximum new tokens to generate         |
+| `--base_model`     | str  | `Amshaker/Mobile-VideoGPT-0.5B` | Base model for LoRA adapters           |
+| `--limit`          | int  | `None`                          | Limit samples to process (for testing) |
 
 **Sample Commands:**
 
@@ -96,11 +98,12 @@ python utils/test_inference.py \
 **Purpose:** Generate an Excel evaluation report with similarity scores (BERT cosine similarity and METEOR score) comparing predictions to ground truth.
 
 **Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--predictions` | str | _required_ | Path to predictions JSON from `test_inference.py` |
-| `--output` | str | Same directory as predictions | Output Excel file path |
-| `--no-bert` | flag | `False` | Skip BERT similarity (faster evaluation) |
+
+| Argument        | Type | Default                       | Description                                       |
+| --------------- | ---- | ----------------------------- | ------------------------------------------------- |
+| `--predictions` | str  | _required_                    | Path to predictions JSON from `test_inference.py` |
+| `--output`      | str  | Same directory as predictions | Output Excel file path                            |
+| `--no-bert`     | flag | `False`                       | Skip BERT similarity (faster evaluation)          |
 
 **Sample Commands:**
 
@@ -118,7 +121,7 @@ python utils/generate_test_report.py \
 
 **Output:** Excel file with:
 
-- Color-coded similarity scores (green ≥0.7, yellow ≥0.4, red <0.4 for BERT)
+- Color-coded similarity scores (green ≥0.7, yellow ≥0.4, red \<0.4 for BERT)
 - Summary statistics (mean, median, std dev, min, max)
 - BERT cosine similarity and METEOR scores
 
@@ -131,13 +134,14 @@ python utils/generate_test_report.py \
 **Purpose:** Upload finetuned Mobile-VideoGPT models to HuggingFace Hub.
 
 **Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--model_path` | str | _required_ | Path to finetuned model directory |
-| `--repo_name` | str | `qved-finetune-TIMESTAMP` | Name for HuggingFace repository |
-| `--org` | str | `EdgeVLM-Labs` | HuggingFace organization name |
-| `--private` | flag | `False` | Create a private repository |
-| `--commit_message` | str | Auto-generated | Custom commit message |
+
+| Argument           | Type | Default                   | Description                       |
+| ------------------ | ---- | ------------------------- | --------------------------------- |
+| `--model_path`     | str  | _required_                | Path to finetuned model directory |
+| `--repo_name`      | str  | `qved-finetune-TIMESTAMP` | Name for HuggingFace repository   |
+| `--org`            | str  | `EdgeVLM-Labs`            | HuggingFace organization name     |
+| `--private`        | flag | `False`                   | Create a private repository       |
+| `--commit_message` | str  | Auto-generated            | Custom commit message             |
 
 **Sample Commands:**
 
@@ -170,11 +174,12 @@ python utils/hf_upload.py \
 **Purpose:** Generate LaTeX-quality training plots from log files (loss, gradient norm, learning rate).
 
 **Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--log_file` | str | _required_ | Path to training log file |
-| `--model_name` | str | `model` | Name for output files |
-| `--output_dir` | str | `plots/{model_name}` | Output directory for plots |
+
+| Argument       | Type | Default              | Description                |
+| -------------- | ---- | -------------------- | -------------------------- |
+| `--log_file`   | str  | _required_           | Path to training log file  |
+| `--model_name` | str  | `model`              | Name for output files      |
+| `--output_dir` | str  | `plots/{model_name}` | Output directory for plots |
 
 **Sample Commands:**
 

@@ -46,9 +46,12 @@ def flatten_varlen_lse(lse, cu_seqlens):
     """
     total_seqlen = cu_seqlens[-1]
     batch_size, nheads, max_seqlen = lse.shape
-    output = torch.empty((nheads, total_seqlen), dtype=lse.dtype, device=lse.device)
+    output = torch.empty((nheads, total_seqlen),
+                         dtype=lse.dtype,
+                         device=lse.device)
 
-    grid = lambda META: (triton.cdiv(max_seqlen, META["BLOCK_M"]), batch_size, nheads)
+    grid = lambda META: (triton.cdiv(max_seqlen, META['BLOCK_M']), batch_size,
+                         nheads)
     BLOCK_M = 4
 
     with torch.cuda.device(lse.device.index):
@@ -118,7 +121,8 @@ def unflatten_varlen_lse(lse, cu_seqlens, max_seqlen: int):
         device=lse.device,
     )
 
-    grid = lambda META: (triton.cdiv(max_seqlen, META["BLOCK_M"]), batch_size, nheads)
+    grid = lambda META: (triton.cdiv(max_seqlen, META['BLOCK_M']), batch_size,
+                         nheads)
     BLOCK_M = 4
 
     with torch.cuda.device(lse.device.index):

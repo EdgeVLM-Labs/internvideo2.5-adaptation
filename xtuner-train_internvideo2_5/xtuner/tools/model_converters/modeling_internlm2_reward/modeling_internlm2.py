@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch InternLM2 model."""
+"""PyTorch InternLM2 model."""
 import math
 import queue
 import threading
@@ -27,18 +27,13 @@ from einops import rearrange
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    CausalLMOutputWithPast,
-    SequenceClassifierOutputWithPast,
-)
+from transformers.modeling_outputs import (BaseModelOutputWithPast,
+                                           CausalLMOutputWithPast,
+                                           SequenceClassifierOutputWithPast)
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import (
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
+from transformers.utils import (add_start_docstrings,
+                                add_start_docstrings_to_model_forward, logging,
+                                replace_return_docstrings)
 
 try:
     from transformers.generation.streamers import BaseStreamer
@@ -49,27 +44,36 @@ from .configuration_internlm2 import InternLM2Config
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "InternLM2Config"
+_CONFIG_FOR_DOC = 'InternLM2Config'
 
 flash_attn_func, flash_attn_varlen_func = None, None
 pad_input, index_first_axis, unpad_input = None, None, None
+
+
 def _import_flash_attn():
     global flash_attn_func, flash_attn_varlen_func
     global pad_input, index_first_axis, unpad_input
     try:
-        from flash_attn import flash_attn_func as _flash_attn_func, flash_attn_varlen_func as _flash_attn_varlen_func
-        from flash_attn.bert_padding import pad_input as _pad_input, index_first_axis as _index_first_axis, unpad_input as _unpad_input
+        from flash_attn import flash_attn_func as _flash_attn_func
+        from flash_attn import \
+            flash_attn_varlen_func as _flash_attn_varlen_func
+        from flash_attn.bert_padding import \
+            index_first_axis as _index_first_axis
+        from flash_attn.bert_padding import pad_input as _pad_input
+        from flash_attn.bert_padding import unpad_input as _unpad_input
         flash_attn_func, flash_attn_varlen_func = _flash_attn_func, _flash_attn_varlen_func
         pad_input, index_first_axis, unpad_input = _pad_input, _index_first_axis, _unpad_input
     except ImportError:
-        raise ImportError("flash_attn is not installed.")
+        raise ImportError('flash_attn is not installed.')
+
 
 # Copied from transformers.models.llama.modeling_llama._get_unpad_data
 def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
-    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
+    cu_seqlens = F.pad(
+        torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
     return (
         indices,
         cu_seqlens,
@@ -78,44 +82,54 @@ def _get_unpad_data(attention_mask):
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
-def _make_causal_mask(
-    input_ids_shape: torch.Size, dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
-):
-    """
-    Make causal mask used for bi-directional self-attention.
-    """
+def _make_causal_mask(input_ids_shape: torch.Size,
+                      dtype: torch.dtype,
+                      device: torch.device,
+                      past_key_values_length: int = 0):
+    """Make causal mask used for bi-directional self-attention."""
     bsz, tgt_len = input_ids_shape
-    mask = torch.full((tgt_len, tgt_len), torch.tensor(torch.finfo(dtype).min, device=device), device=device)
+    mask = torch.full((tgt_len, tgt_len),
+                      torch.tensor(torch.finfo(dtype).min, device=device),
+                      device=device)
     mask_cond = torch.arange(mask.size(-1), device=device)
     mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
     mask = mask.to(dtype)
 
     if past_key_values_length > 0:
-        mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
-    return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
+        mask = torch.cat([
+            torch.zeros(
+                tgt_len, past_key_values_length, dtype=dtype, device=device),
+            mask
+        ],
+                         dim=-1)
+    return mask[None, None, :, :].expand(bsz, 1, tgt_len,
+                                         tgt_len + past_key_values_length)
 
 
 # Copied from transformers.models.bart.modeling_bart._expand_mask
-def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
-    """
-    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
-    """
+def _expand_mask(mask: torch.Tensor,
+                 dtype: torch.dtype,
+                 tgt_len: Optional[int] = None):
+    """Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len,
+    src_seq_len]`."""
     bsz, src_len = mask.size()
     tgt_len = tgt_len if tgt_len is not None else src_len
 
-    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len,
+                                                  src_len).to(dtype)
 
     inverted_mask = 1.0 - expanded_mask
 
-    return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+    return inverted_mask.masked_fill(
+        inverted_mask.to(torch.bool),
+        torch.finfo(dtype).min)
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->InternLM2
 class InternLM2RMSNorm(nn.Module):
+
     def __init__(self, hidden_size, eps=1e-6):
-        """
-        InternLM2RMSNorm is equivalent to T5LayerNorm
-        """
+        """InternLM2RMSNorm is equivalent to T5LayerNorm."""
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
@@ -124,40 +138,53 @@ class InternLM2RMSNorm(nn.Module):
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        hidden_states = hidden_states * torch.rsqrt(variance +
+                                                    self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
 
 
 # Copied from transformers.model.llama.modeling_llama.LlamaRotaryEmbedding with Llama->InternLM2
 class InternLM2RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+
+    def __init__(self,
+                 dim,
+                 max_position_embeddings=2048,
+                 base=10000,
+                 device=None):
         super().__init__()
 
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        inv_freq = 1.0 / (
+            self.base
+            **(torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        self.register_buffer('inv_freq', inv_freq, persistent=False)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
+            seq_len=max_position_embeddings,
+            device=self.inv_freq.device,
+            dtype=torch.get_default_dtype())
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        t = torch.arange(
+            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
 
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+        self.register_buffer(
+            'cos_cached', emb.cos().to(dtype), persistent=False)
+        self.register_buffer(
+            'sin_cached', emb.sin().to(dtype), persistent=False)
 
     def forward(self, x, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
         if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=torch.float32)
+            self._set_cos_sin_cache(
+                seq_len=seq_len, device=x.device, dtype=torch.float32)
 
         return (
             self.cos_cached[:seq_len].to(dtype=x.dtype),
@@ -167,31 +194,48 @@ class InternLM2RotaryEmbedding(nn.Module):
 
 # Copied from transformers.model.llama.modeling_llama.LlamaLinearScalingRotaryEmbedding with Llama->InternLM2
 class InternLM2LinearScalingRotaryEmbedding(InternLM2RotaryEmbedding):
-    """InternLM2RotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
+    """InternLM2RotaryEmbedding extended with linear scaling.
 
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
+    Credits to the Reddit user /u/kaiokendev
+    """
+
+    def __init__(self,
+                 dim,
+                 max_position_embeddings=2048,
+                 base=10000,
+                 device=None,
+                 scaling_factor=1.0):
         self.scaling_factor = scaling_factor
         super().__init__(dim, max_position_embeddings, base, device)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        t = torch.arange(
+            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
         t = t / self.scaling_factor
 
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+        self.register_buffer(
+            'cos_cached', emb.cos().to(dtype), persistent=False)
+        self.register_buffer(
+            'sin_cached', emb.sin().to(dtype), persistent=False)
 
 
 # Copied from transformers.model.llama.modeling_llama.LlamaDynamicNTKScalingRotaryEmbedding with Llama->InternLM2
 class InternLM2DynamicNTKScalingRotaryEmbedding(InternLM2RotaryEmbedding):
     """InternLM2RotaryEmbedding extended with Dynamic NTK scaling.
+
     Credits to the Reddit users /u/bloc97 and /u/emozilla.
     """
 
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
+    def __init__(self,
+                 dim,
+                 max_position_embeddings=2048,
+                 base=10000,
+                 device=None,
+                 scaling_factor=1.0):
         self.scaling_factor = scaling_factor
         super().__init__(dim, max_position_embeddings, base, device)
 
@@ -199,26 +243,32 @@ class InternLM2DynamicNTKScalingRotaryEmbedding(InternLM2RotaryEmbedding):
         self.max_seq_len_cached = seq_len
 
         if seq_len > self.max_position_embeddings:
-            base = self.base * (
-                (self.scaling_factor * seq_len / self.max_position_embeddings) - (self.scaling_factor - 1)
-            ) ** (self.dim / (self.dim - 2))
-            inv_freq = 1.0 / (base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
-            self.register_buffer("inv_freq", inv_freq, persistent=False)
+            base = self.base * ((self.scaling_factor * seq_len /
+                                 self.max_position_embeddings) -
+                                (self.scaling_factor - 1))**(
+                                    self.dim / (self.dim - 2))
+            inv_freq = 1.0 / (
+                base
+                **(torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+            self.register_buffer('inv_freq', inv_freq, persistent=False)
 
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        t = torch.arange(
+            self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
 
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+        self.register_buffer(
+            'cos_cached', emb.cos().to(dtype), persistent=False)
+        self.register_buffer(
+            'sin_cached', emb.sin().to(dtype), persistent=False)
 
 
 # Copied from transformers.model.llama.modeling_llama.rotate_half
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
+    x1 = x[..., :x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
     return torch.cat((-x2, x1), dim=-1)
 
 
@@ -233,14 +283,18 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
 
 
 class InternLM2MLP(nn.Module):
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.w1 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.w3 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.w2 = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.w1 = nn.Linear(
+            self.hidden_size, self.intermediate_size, bias=False)
+        self.w3 = nn.Linear(
+            self.hidden_size, self.intermediate_size, bias=False)
+        self.w2 = nn.Linear(
+            self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
@@ -251,20 +305,26 @@ class InternLM2MLP(nn.Module):
 
 # Copied from transformers.model.llama.modeling_llama.repeat_kv
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """This is the equivalent of torch.repeat_interleave(x, dim=1,
+    repeats=n_rep).
+
+    The hidden states go from (batch, num_key_value_heads, seqlen, head_dim) to
+    (batch, num_attention_heads, seqlen, head_dim)
     """
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
-    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+    hidden_states = hidden_states[:, :,
+                                  None, :, :].expand(batch,
+                                                     num_key_value_heads,
+                                                     n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen,
+                                 head_dim)
 
 
 # Modified from transformers.model.llama.modeling_llama.LlamaAttention
 class InternLM2Attention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
+    """Multi-headed attention from 'Attention Is All You Need' paper."""
 
     def __init__(self, config: InternLM2Config):
         super().__init__()
@@ -279,9 +339,8 @@ class InternLM2Attention(nn.Module):
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+                f'hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}'
+                f' and `num_heads`: {self.num_heads}).')
 
         self.wqkv = nn.Linear(
             self.hidden_size,
@@ -289,7 +348,8 @@ class InternLM2Attention(nn.Module):
             bias=config.bias,
         )
 
-        self.wo = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.bias)
+        self.wo = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=config.bias)
         self._init_rope()
 
     def _init_rope(self):
@@ -300,16 +360,16 @@ class InternLM2Attention(nn.Module):
                 base=self.config.rope_theta,
             )
         else:
-            scaling_type = self.config.rope_scaling["type"]
-            scaling_factor = self.config.rope_scaling["factor"]
-            if scaling_type == "dynamic":
+            scaling_type = self.config.rope_scaling['type']
+            scaling_factor = self.config.rope_scaling['factor']
+            if scaling_type == 'dynamic':
                 self.rotary_emb = InternLM2DynamicNTKScalingRotaryEmbedding(
                     self.head_dim,
                     max_position_embeddings=self.max_position_embeddings,
                     base=self.config.rope_theta,
                     scaling_factor=scaling_factor,
                 )
-            elif scaling_type == "linear":
+            elif scaling_type == 'linear':
                 self.rotary_emb = InternLM2LinearScalingRotaryEmbedding(
                     self.head_dim,
                     max_position_embeddings=self.max_position_embeddings,
@@ -317,11 +377,14 @@ class InternLM2Attention(nn.Module):
                     scaling_factor=scaling_factor,
                 )
             else:
-                raise ValueError("Currently we only support rotary embedding's type being 'dynamic' or 'linear'.")
+                raise ValueError(
+                    "Currently we only support rotary embedding's type being 'dynamic' or 'linear'."
+                )
         return self.rotary_emb
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+        return tensor.view(bsz, seq_len, self.num_heads,
+                           self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -332,12 +395,12 @@ class InternLM2Attention(nn.Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if "padding_mask" in kwargs:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
+               Optional[Tuple[torch.Tensor]]]:
+        if 'padding_mask' in kwargs:
             warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. "
-                "Please make sure use `attention_mask` instead.`"
-            )
+                'Passing `padding_mask` is deprecated and will be removed in v4.37. '
+                'Please make sure use `attention_mask` instead.`')
 
         bsz, q_len, _ = hidden_states.size()
 
@@ -345,13 +408,13 @@ class InternLM2Attention(nn.Module):
 
         qkv_states = rearrange(
             qkv_states,
-            "b q (h gs d) -> b q h gs d",
+            'b q (h gs d) -> b q h gs d',
             gs=2 + self.num_key_value_groups,
             d=self.head_dim,
         )
 
-        query_states = qkv_states[..., : self.num_key_value_groups, :]
-        query_states = rearrange(query_states, "b q h gs d -> b q (h gs) d")
+        query_states = qkv_states[..., :self.num_key_value_groups, :]
+        query_states = rearrange(query_states, 'b q h gs d -> b q (h gs) d')
         key_states = qkv_states[..., -2, :]
         value_states = qkv_states[..., -1, :]
 
@@ -363,7 +426,8 @@ class InternLM2Attention(nn.Module):
         if past_key_value is not None:
             kv_seq_len += past_key_value[0].shape[-2]
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
             # reuse k, v, self_attention
@@ -375,30 +439,30 @@ class InternLM2Attention(nn.Module):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_weights = torch.matmul(query_states, key_states.transpose(
+            2, 3)) / math.sqrt(self.head_dim)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
+                f'Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is'
+                f' {attn_weights.size()}')
 
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
                 raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                    f'Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}'
                 )
             attn_weights = attn_weights + attention_mask
 
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.softmax(
+            attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
+                f'`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is'
+                f' {attn_output.size()}')
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
@@ -413,10 +477,12 @@ class InternLM2Attention(nn.Module):
 
 # Modified from transformers.model.llama.modeling_llama.InternLM2FlashAttention2
 class InternLM2FlashAttention2(InternLM2Attention):
-    """
-    InternLM2 flash attention module. This module inherits from `InternLM2Attention` as the weights of the module stays
-    untouched. The only required change would be on the forward pass where it needs to correctly call the public API of
-    flash attention and deal with padding tokens in case the input contains any of them.
+    """InternLM2 flash attention module.
+
+    This module inherits from `InternLM2Attention` as the weights of the module
+    stays untouched. The only required change would be on the forward pass
+    where it needs to correctly call the public API of flash attention and deal
+    with padding tokens in case the input contains any of them.
     """
 
     def forward(
@@ -428,16 +494,16 @@ class InternLM2FlashAttention2(InternLM2Attention):
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
+               Optional[Tuple[torch.Tensor]]]:
         # InternLM2FlashAttention2 attention does not support output_attentions
-        if "padding_mask" in kwargs:
+        if 'padding_mask' in kwargs:
             warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. "
-                "Please make sure use `attention_mask` instead.`"
-            )
+                'Passing `padding_mask` is deprecated and will be removed in v4.37. '
+                'Please make sure use `attention_mask` instead.`')
 
             # overwrite attention_mask with padding_mask
-            attention_mask = kwargs.pop("padding_mask")
+            attention_mask = kwargs.pop('padding_mask')
 
         output_attentions = False
 
@@ -447,13 +513,13 @@ class InternLM2FlashAttention2(InternLM2Attention):
 
         qkv_states = rearrange(
             qkv_states,
-            "b q (h gs d) -> b q h gs d",
+            'b q (h gs d) -> b q h gs d',
             gs=2 + self.num_key_value_groups,
             d=self.head_dim,
         )
 
-        query_states = qkv_states[..., : self.num_key_value_groups, :]
-        query_states = rearrange(query_states, "b q h gs d -> b q (h gs) d")
+        query_states = qkv_states[..., :self.num_key_value_groups, :]
+        query_states = rearrange(query_states, 'b q h gs d -> b q (h gs) d')
         key_states = qkv_states[..., -2, :]
         value_states = qkv_states[..., -1, :]
 
@@ -467,7 +533,8 @@ class InternLM2FlashAttention2(InternLM2Attention):
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
             # reuse k, v, self_attention
@@ -480,10 +547,11 @@ class InternLM2FlashAttention2(InternLM2Attention):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-        attn_output = self._flash_attention_forward(
-            query_states, key_states, value_states, attention_mask, q_len
-        )
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
+        attn_output = self._flash_attention_forward(query_states, key_states,
+                                                    value_states,
+                                                    attention_mask, q_len)
+        attn_output = attn_output.reshape(bsz, q_len,
+                                          self.hidden_size).contiguous()
         attn_output = self.wo(attn_output)
 
         if not output_attentions:
@@ -491,9 +559,14 @@ class InternLM2FlashAttention2(InternLM2Attention):
 
         return attn_output, attn_weights, past_key_value
 
-    def _flash_attention_forward(
-        self, query_states, key_states, value_states, attention_mask, query_length, dropout=0.0, softmax_scale=None
-    ):
+    def _flash_attention_forward(self,
+                                 query_states,
+                                 key_states,
+                                 value_states,
+                                 attention_mask,
+                                 query_length,
+                                 dropout=0.0,
+                                 softmax_scale=None):
         """
         Calls the forward method of Flash Attention - if the input hidden states contain at least one padding token
         first unpad the input, then computes the attention scores and pad the final attention scores.
@@ -518,8 +591,8 @@ class InternLM2FlashAttention2(InternLM2Attention):
         if attention_mask is not None:
             batch_size = query_states.shape[0]
             query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._unpad_input(
-                query_states, key_states, value_states, attention_mask, query_length
-            )
+                query_states, key_states, value_states, attention_mask,
+                query_length)
 
             cu_seqlens_q, cu_seqlens_k = cu_seq_lens
             max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
@@ -537,29 +610,36 @@ class InternLM2FlashAttention2(InternLM2Attention):
                 causal=causal,
             )
 
-            attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
+            attn_output = pad_input(attn_output_unpad, indices_q, batch_size,
+                                    query_length)
         else:
             attn_output = flash_attn_func(
-                query_states, key_states, value_states, dropout, softmax_scale=softmax_scale, causal=causal
-            )
+                query_states,
+                key_states,
+                value_states,
+                dropout,
+                softmax_scale=softmax_scale,
+                causal=causal)
 
         return attn_output
 
-    def _unpad_input(self, query_layer, key_layer, value_layer, attention_mask, query_length):
-        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
+    def _unpad_input(self, query_layer, key_layer, value_layer, attention_mask,
+                     query_length):
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(
+            attention_mask)
         batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
 
         key_layer = index_first_axis(
-            key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
-        )
+            key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads,
+                              head_dim), indices_k)
         value_layer = index_first_axis(
-            value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
-        )
+            value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads,
+                                head_dim), indices_k)
 
         if query_length == kv_seq_len:
             query_layer = index_first_axis(
-                query_layer.reshape(batch_size * kv_seq_len, self.num_heads, head_dim), indices_k
-            )
+                query_layer.reshape(batch_size * kv_seq_len, self.num_heads,
+                                    head_dim), indices_k)
             cu_seqlens_q = cu_seqlens_k
             max_seqlen_in_batch_q = max_seqlen_in_batch_k
             indices_q = indices_k
@@ -573,7 +653,8 @@ class InternLM2FlashAttention2(InternLM2Attention):
         else:
             # The -q_len: slice assumes left padding.
             attention_mask = attention_mask[:, -query_length:]
-            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(
+                query_layer, attention_mask)
 
         return (
             query_layer,
@@ -584,22 +665,29 @@ class InternLM2FlashAttention2(InternLM2Attention):
             (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
         )
 
+
 INTERNLM2_ATTENTION_CLASSES = {
-    "eager": InternLM2Attention,
-    "flash_attention_2": InternLM2FlashAttention2,
+    'eager': InternLM2Attention,
+    'flash_attention_2': InternLM2FlashAttention2,
 }
+
 
 # Modified from transformers.model.llama.modeling_llama.LlamaDecoderLayer
 class InternLM2DecoderLayer(nn.Module):
+
     def __init__(self, config: InternLM2Config):
         super().__init__()
         self.hidden_size = config.hidden_size
 
-        self.attention = INTERNLM2_ATTENTION_CLASSES[config.attn_implementation](config=config)
+        self.attention = INTERNLM2_ATTENTION_CLASSES[
+            config.attn_implementation](
+                config=config)
 
         self.feed_forward = InternLM2MLP(config)
-        self.attention_norm = InternLM2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.ffn_norm = InternLM2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.attention_norm = InternLM2RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps)
+        self.ffn_norm = InternLM2RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -610,7 +698,8 @@ class InternLM2DecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor,
+                                                 torch.FloatTensor]]]:
         """
         Args:
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
@@ -625,11 +714,10 @@ class InternLM2DecoderLayer(nn.Module):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
-        if "padding_mask" in kwargs:
+        if 'padding_mask' in kwargs:
             warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. "
-                "Please make sure use `attention_mask` instead.`"
-            )
+                'Passing `padding_mask` is deprecated and will be removed in v4.37. '
+                'Please make sure use `attention_mask` instead.`')
 
         residual = hidden_states
 
@@ -653,13 +741,13 @@ class InternLM2DecoderLayer(nn.Module):
         hidden_states = self.feed_forward(hidden_states)
         hidden_states = residual + hidden_states
 
-        outputs = (hidden_states,)
+        outputs = (hidden_states, )
 
         if output_attentions:
-            outputs += (self_attn_weights,)
+            outputs += (self_attn_weights, )
 
         if use_cache:
-            outputs += (present_key_value,)
+            outputs += (present_key_value, )
 
         return outputs
 
@@ -683,15 +771,15 @@ InternLM2_START_DOCSTRING = r"""
 
 # Copied from transformers.models.llama.modeling_llama.LlamaPreTrainedModel with Llama->InternLM2
 @add_start_docstrings(
-    "The bare InternLM2 Model outputting raw hidden-states without any specific head on top.",
+    'The bare InternLM2 Model outputting raw hidden-states without any specific head on top.',
     InternLM2_START_DOCSTRING,
 )
 class InternLM2PreTrainedModel(PreTrainedModel):
     config_class = InternLM2Config
-    base_model_prefix = "model"
+    base_model_prefix = 'model'
     supports_gradient_checkpointing = True
-    _no_split_modules = ["InternLM2DecoderLayer"]
-    _skip_keys_device_placement = "past_key_values"
+    _no_split_modules = ['InternLM2DecoderLayer']
+    _skip_keys_device_placement = 'past_key_values'
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -772,18 +860,18 @@ InternLM2_INPUTS_DOCSTRING = r"""
 
 # Modified from transformers.model.llama.modeling_llama.LlamaModel
 @add_start_docstrings(
-    "The bare InternLM2 Model outputting raw hidden-states without any specific head on top.",
+    'The bare InternLM2 Model outputting raw hidden-states without any specific head on top.',
     InternLM2_START_DOCSTRING,
 )
 class InternLM2Model(InternLM2PreTrainedModel):
-    """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`InternLM2DecoderLayer`]
+    """Transformer decoder consisting of *config.num_hidden_layers* layers.
+    Each layer is a [`InternLM2DecoderLayer`]
 
     Args:
         config: InternLM2Config
     """
 
-    _auto_class = "AutoModel"
+    _auto_class = 'AutoModel'
 
     def __init__(self, config: InternLM2Config):
         super().__init__(config)
@@ -791,10 +879,16 @@ class InternLM2Model(InternLM2PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.config = config
 
-        self.tok_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.tok_embeddings = nn.Embedding(config.vocab_size,
+                                           config.hidden_size,
+                                           self.padding_idx)
 
-        self.layers = nn.ModuleList([InternLM2DecoderLayer(config) for _ in range(config.num_hidden_layers)])
-        self.norm = InternLM2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layers = nn.ModuleList([
+            InternLM2DecoderLayer(config)
+            for _ in range(config.num_hidden_layers)
+        ])
+        self.norm = InternLM2RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -806,7 +900,8 @@ class InternLM2Model(InternLM2PreTrainedModel):
     def set_input_embeddings(self, value):
         self.tok_embeddings = value
 
-    def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+    def _prepare_decoder_attention_mask(self, attention_mask, input_shape,
+                                        inputs_embeds, past_key_values_length):
         # create causal mask
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
         combined_attention_mask = None
@@ -820,12 +915,12 @@ class InternLM2Model(InternLM2PreTrainedModel):
 
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
-                inputs_embeds.device
-            )
+            expanded_attn_mask = _expand_mask(
+                attention_mask, inputs_embeds.dtype,
+                tgt_len=input_shape[-1]).to(inputs_embeds.device)
             combined_attention_mask = (
-                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
-            )
+                expanded_attn_mask if combined_attention_mask is None else
+                expanded_attn_mask + combined_attention_mask)
 
         return combined_attention_mask
 
@@ -844,24 +939,27 @@ class InternLM2Model(InternLM2PreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+            output_hidden_states if output_hidden_states is not None else
+            self.config.output_hidden_states)
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        if self.config.attn_implementation == "flash_attention_2":
+        if self.config.attn_implementation == 'flash_attention_2':
             _import_flash_attn()
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                'You cannot specify both input_ids and inputs_embeds at the same time'
+            )
         elif input_ids is not None:
             batch_size, seq_length = input_ids.shape[:2]
         elif inputs_embeds is not None:
             batch_size, seq_length = inputs_embeds.shape[:2]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                'You have to specify either input_ids or inputs_embeds')
 
         seq_length_with_past = seq_length
         past_key_values_length = 0
@@ -872,24 +970,27 @@ class InternLM2Model(InternLM2PreTrainedModel):
         if position_ids is None:
             device = input_ids.device if input_ids is not None else inputs_embeds.device
             position_ids = torch.arange(
-                past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device
-            )
+                past_key_values_length,
+                seq_length + past_key_values_length,
+                dtype=torch.long,
+                device=device)
             position_ids = position_ids.unsqueeze(0)
 
         if inputs_embeds is None:
             inputs_embeds = self.tok_embeddings(input_ids)
 
-        if self.config.attn_implementation == "flash_attention_2":
+        if self.config.attn_implementation == 'flash_attention_2':
             # 2d mask is passed through the layers
-            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
+            attention_mask = attention_mask if (
+                attention_mask is not None and 0 in attention_mask) else None
         else:
             if attention_mask is None:
-                attention_mask = torch.ones(
-                    (batch_size, seq_length_with_past), dtype=torch.bool, device=inputs_embeds.device
-                )
+                attention_mask = torch.ones((batch_size, seq_length_with_past),
+                                            dtype=torch.bool,
+                                            device=inputs_embeds.device)
             attention_mask = self._prepare_decoder_attention_mask(
-                attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
-            )
+                attention_mask, (batch_size, seq_length), inputs_embeds,
+                past_key_values_length)
 
         # embed positions
         hidden_states = inputs_embeds
@@ -897,7 +998,7 @@ class InternLM2Model(InternLM2PreTrainedModel):
         if self.gradient_checkpointing and self.training:
             if use_cache:
                 logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                    '`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`...'
                 )
                 use_cache = False
 
@@ -908,13 +1009,15 @@ class InternLM2Model(InternLM2PreTrainedModel):
 
         for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
-                all_hidden_states += (hidden_states,)
+                all_hidden_states += (hidden_states, )
 
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+            past_key_value = past_key_values[
+                idx] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
 
                 def create_custom_forward(module):
+
                     def custom_forward(*inputs):
                         # None for past_key_value
                         return module(*inputs, output_attentions, None)
@@ -941,20 +1044,24 @@ class InternLM2Model(InternLM2PreTrainedModel):
             hidden_states = layer_outputs[0]
 
             if use_cache:
-                next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
+                next_decoder_cache += (
+                    layer_outputs[2 if output_attentions else 1], )
 
             if output_attentions:
-                all_self_attns += (layer_outputs[1],)
+                all_self_attns += (layer_outputs[1], )
 
         hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
-            all_hidden_states += (hidden_states,)
+            all_hidden_states += (hidden_states, )
 
         next_cache = next_decoder_cache if use_cache else None
         if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+            return tuple(
+                v for v in
+                [hidden_states, next_cache, all_hidden_states, all_self_attns]
+                if v is not None)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -965,15 +1072,16 @@ class InternLM2Model(InternLM2PreTrainedModel):
 
 # Modified from transformers.model.llama.modeling_llama.LlamaForCausalLM
 class InternLM2ForCausalLM(InternLM2PreTrainedModel):
-    _auto_class = "AutoModelForCausalLM"
+    _auto_class = 'AutoModelForCausalLM'
 
-    _tied_weights_keys = ["output.weight"]
+    _tied_weights_keys = ['output.weight']
 
     def __init__(self, config):
         super().__init__(config)
         self.model = InternLM2Model(config)
         self.vocab_size = config.vocab_size
-        self.output = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.output = nn.Linear(
+            config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -997,7 +1105,8 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
         return self.model
 
     @add_start_docstrings_to_model_forward(InternLM2_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    @replace_return_docstrings(
+        output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1039,8 +1148,8 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+            output_hidden_states if output_hidden_states is not None else
+            self.config.output_hidden_states)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -1074,8 +1183,8 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
             loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
+            output = (logits, ) + outputs[1:]
+            return (loss, ) + output if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -1085,9 +1194,12 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
             attentions=outputs.attentions,
         )
 
-    def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
-    ):
+    def prepare_inputs_for_generation(self,
+                                      input_ids,
+                                      past_key_values=None,
+                                      attention_mask=None,
+                                      inputs_embeds=None,
+                                      **kwargs):
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
 
@@ -1100,42 +1212,44 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
 
             input_ids = input_ids[:, remove_prefix_length:]
 
-        position_ids = kwargs.get("position_ids", None)
+        position_ids = kwargs.get('position_ids', None)
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
             if past_key_values:
-                position_ids = position_ids[:, -input_ids.shape[1] :]
+                position_ids = position_ids[:, -input_ids.shape[1]:]
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and past_key_values is None:
-            model_inputs = {"inputs_embeds": inputs_embeds}
+            model_inputs = {'inputs_embeds': inputs_embeds}
         else:
-            model_inputs = {"input_ids": input_ids}
+            model_inputs = {'input_ids': input_ids}
 
-        model_inputs.update(
-            {
-                "position_ids": position_ids,
-                "past_key_values": past_key_values,
-                "use_cache": kwargs.get("use_cache"),
-                "attention_mask": attention_mask,
-            }
-        )
+        model_inputs.update({
+            'position_ids': position_ids,
+            'past_key_values': past_key_values,
+            'use_cache': kwargs.get('use_cache'),
+            'attention_mask': attention_mask,
+        })
         return model_inputs
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
         reordered_past = ()
         for layer_past in past_key_values:
-            reordered_past += (
-                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
-            )
+            reordered_past += (tuple(
+                past_state.index_select(0, beam_idx.to(past_state.device))
+                for past_state in layer_past), )
         return reordered_past
 
-    def build_inputs(self, tokenizer, query: str, history: List[Tuple[str, str]] = [], meta_instruction=""):
+    def build_inputs(self,
+                     tokenizer,
+                     query: str,
+                     history: List[Tuple[str, str]] = [],
+                     meta_instruction=''):
         if tokenizer.add_bos_token:
-            prompt = ""
+            prompt = ''
         else:
             prompt = tokenizer.bos_token
         if meta_instruction:
@@ -1143,7 +1257,7 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
         for record in history:
             prompt += f"""<|im_start|>user\n{record[0]}<|im_end|>\n<|im_start|>assistant\n{record[1]}<|im_end|>\n"""
         prompt += f"""<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"""
-        return tokenizer([prompt], return_tensors="pt")
+        return tokenizer([prompt], return_tensors='pt')
 
     @torch.no_grad()
     def chat(
@@ -1156,15 +1270,22 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
         do_sample: bool = True,
         temperature: float = 0.8,
         top_p: float = 0.8,
-        meta_instruction: str = "You are an AI assistant whose name is InternLM (书生·浦语).\n"
-        "- InternLM (书生·浦语) is a conversational language model that is developed by Shanghai AI Laboratory (上海人工智能实验室). It is designed to be helpful, honest, and harmless.\n"
-        "- InternLM (书生·浦语) can understand and communicate fluently in the language chosen by the user such as English and 中文.",
+        meta_instruction:
+        str = 'You are an AI assistant whose name is InternLM (书生·浦语).\n'
+        '- InternLM (书生·浦语) is a conversational language model that is developed by Shanghai AI Laboratory (上海人工智能实验室). It is designed to be helpful, honest, and harmless.\n'
+        '- InternLM (书生·浦语) can understand and communicate fluently in the language chosen by the user such as English and 中文.',
         **kwargs,
     ):
         inputs = self.build_inputs(tokenizer, query, history, meta_instruction)
-        inputs = {k: v.to(self.device) for k, v in inputs.items() if torch.is_tensor(v)}
+        inputs = {
+            k: v.to(self.device)
+            for k, v in inputs.items() if torch.is_tensor(v)
+        }
         # also add end-of-assistant token in eos token id to avoid unnecessary generation
-        eos_token_id = [tokenizer.eos_token_id, tokenizer.convert_tokens_to_ids(["<|im_end|>"])[0]]
+        eos_token_id = [
+            tokenizer.eos_token_id,
+            tokenizer.convert_tokens_to_ids(['<|im_end|>'])[0]
+        ]
         outputs = self.generate(
             **inputs,
             streamer=streamer,
@@ -1175,9 +1296,9 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
             eos_token_id=eos_token_id,
             **kwargs,
         )
-        outputs = outputs[0].cpu().tolist()[len(inputs["input_ids"][0]) :]
+        outputs = outputs[0].cpu().tolist()[len(inputs['input_ids'][0]):]
         response = tokenizer.decode(outputs, skip_special_tokens=True)
-        response = response.split("<|im_end|>")[0]
+        response = response.split('<|im_end|>')[0]
         history = history + [(query, response)]
         return response, history
 
@@ -1193,35 +1314,35 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
         top_p: float = 0.8,
         **kwargs,
     ):
-        """
-        Return a generator in format: (response, history)
-        Eg.
-        ('你好，有什么可以帮助您的吗', [('你好', '你好，有什么可以帮助您的吗')])
-        ('你好，有什么可以帮助您的吗？', [('你好', '你好，有什么可以帮助您的吗？')])
+        """Return a generator in format: (response, history) Eg.
+
+        ('你好，有什么可以帮助您的吗', [('你好', '你好，有什么可以帮助您的吗')]) ('你好，有什么可以帮助您的吗？', [('你好',
+        '你好，有什么可以帮助您的吗？')])
         """
         if BaseStreamer is None:
             raise ModuleNotFoundError(
-                "The version of `transformers` is too low. Please make sure "
-                "that you have installed `transformers>=4.28.0`."
-            )
+                'The version of `transformers` is too low. Please make sure '
+                'that you have installed `transformers>=4.28.0`.')
 
         response_queue = queue.Queue(maxsize=20)
 
         class ChatStreamer(BaseStreamer):
+
             def __init__(self, tokenizer) -> None:
                 super().__init__()
                 self.tokenizer = tokenizer
                 self.queue = response_queue
                 self.query = query
                 self.history = history
-                self.response = ""
+                self.response = ''
                 self.cache = []
                 self.received_inputs = False
-                self.queue.put((self.response, history + [(self.query, self.response)]))
+                self.queue.put(
+                    (self.response, history + [(self.query, self.response)]))
 
             def put(self, value):
                 if len(value.shape) > 1 and value.shape[0] > 1:
-                    raise ValueError("ChatStreamer only supports batch size 1")
+                    raise ValueError('ChatStreamer only supports batch size 1')
                 elif len(value.shape) > 1:
                     value = value[0]
 
@@ -1231,8 +1352,9 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
                     return
 
                 self.cache.extend(value.tolist())
-                token = self.tokenizer.decode(self.cache, skip_special_tokens=True)
-                if token.strip() != "<|im_end|>":
+                token = self.tokenizer.decode(
+                    self.cache, skip_special_tokens=True)
+                if token.strip() != '<|im_end|>':
                     self.response = self.response + token
                     history = self.history + [(self.query, self.response)]
                     self.queue.put((self.response, history))
@@ -1267,11 +1389,12 @@ class InternLM2ForCausalLM(InternLM2PreTrainedModel):
 
         return consumer()
 
+
 # Modified from transformers.model.llama.modeling_llama.LlamaForCausalLM
 class InternLM2ForRewardModel(InternLM2PreTrainedModel):
 
-    _auto_class = "AutoModel"
-    _tied_weights_keys = ["v_head.weight"]
+    _auto_class = 'AutoModel'
+    _tied_weights_keys = ['v_head.weight']
 
     def __init__(self, config):
         super().__init__(config)
@@ -1302,7 +1425,9 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         return self.model
 
     @add_start_docstrings_to_model_forward(InternLM2_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=SequenceClassifierOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    @replace_return_docstrings(
+        output_type=SequenceClassifierOutputWithPast,
+        config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1344,8 +1469,8 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+            output_hidden_states if output_hidden_states is not None else
+            self.config.output_hidden_states)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -1364,15 +1489,15 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         hidden_states = outputs[0]
         hidden_states = self.v_head(hidden_states)
         # get end reward token's score
-        ends = attention_mask.cumsum(dim=1).argmax(dim=1).view(-1,1)
+        ends = attention_mask.cumsum(dim=1).argmax(dim=1).view(-1, 1)
 
         reward_scores = torch.gather(hidden_states.squeeze(-1), 1, ends)
 
         loss = None
 
         if not return_dict:
-            output = (reward_scores,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
+            output = (reward_scores, ) + outputs[1:]
+            return (loss, ) + output if loss is not None else output
 
         return SequenceClassifierOutputWithPast(
             loss=loss,
@@ -1389,16 +1514,24 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         conversation: List[dict],
         **kwargs,
     ):
-        conversation_str = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
-        input_ids = tokenizer.encode(conversation_str, return_tensors="pt", add_special_tokens=False)
+        conversation_str = tokenizer.apply_chat_template(
+            conversation, tokenize=False, add_generation_prompt=False)
+        input_ids = tokenizer.encode(
+            conversation_str, return_tensors='pt', add_special_tokens=False)
         # add reward score token at the end of the input_ids
-        input_ids = torch.cat([input_ids, torch.tensor([[self.reward_token_id]], dtype=torch.long)], dim=1).to(self.device)
-        attention_mask = torch.ones_like(input_ids, dtype=torch.bool).to(self.device)
-        
-        outputs = self.forward(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+        input_ids = torch.cat([
+            input_ids,
+            torch.tensor([[self.reward_token_id]], dtype=torch.long)
+        ],
+                              dim=1).to(self.device)
+        attention_mask = torch.ones_like(
+            input_ids, dtype=torch.bool).to(self.device)
+
+        outputs = self.forward(
+            input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         score = outputs[0].cpu().item()
         return score
-    
+
     @torch.no_grad()
     def get_scores(
         self,
@@ -1406,24 +1539,42 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         conversations: List[List[dict]],
         **kwargs,
     ):
-        conversation_strs = [tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False) for conversation in conversations]
+        conversation_strs = [
+            tokenizer.apply_chat_template(
+                conversation, tokenize=False, add_generation_prompt=False)
+            for conversation in conversations
+        ]
         batch_input_ids = []
         attention_masks = []
 
         for conversation_str in conversation_strs:
-            input_ids = tokenizer.encode(conversation_str, return_tensors="pt", add_special_tokens=False)
-            input_ids = torch.cat([input_ids, torch.tensor([[self.reward_token_id]], dtype=torch.long)], dim=1).squeeze(0)
+            input_ids = tokenizer.encode(
+                conversation_str,
+                return_tensors='pt',
+                add_special_tokens=False)
+            input_ids = torch.cat([
+                input_ids,
+                torch.tensor([[self.reward_token_id]], dtype=torch.long)
+            ],
+                                  dim=1).squeeze(0)
             attention_mask = torch.ones(input_ids.shape, dtype=torch.bool)
             batch_input_ids.append(input_ids)
             attention_masks.append(attention_mask)
 
-        r_pad_batch_input_ids = torch.nn.utils.rnn.pad_sequence(batch_input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
-        r_pad_attention_masks = torch.nn.utils.rnn.pad_sequence(attention_masks, batch_first=True, padding_value=False)
+        r_pad_batch_input_ids = torch.nn.utils.rnn.pad_sequence(
+            batch_input_ids,
+            batch_first=True,
+            padding_value=tokenizer.pad_token_id)
+        r_pad_attention_masks = torch.nn.utils.rnn.pad_sequence(
+            attention_masks, batch_first=True, padding_value=False)
 
-        outputs = self.forward(input_ids=r_pad_batch_input_ids.to(self.device), attention_mask=r_pad_attention_masks.to(self.device), **kwargs)
+        outputs = self.forward(
+            input_ids=r_pad_batch_input_ids.to(self.device),
+            attention_mask=r_pad_attention_masks.to(self.device),
+            **kwargs)
         scores = outputs[0].cpu().tolist()
         return scores
-    
+
     @torch.no_grad()
     def compare(
         self,
@@ -1439,7 +1590,7 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
             return score1, score2
         else:
             return score1 > score2
-        
+
     @torch.no_grad()
     def rank(
         self,
@@ -1452,7 +1603,8 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         if return_logits:
             return scores
         else:
-            return sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+            return sorted(
+                range(len(scores)), key=lambda i: scores[i], reverse=True)
 
 
 # Copied from transformers.model.llama.modeling_llama.LlamaForSequenceClassification with Llama->InternLM2
@@ -1472,6 +1624,7 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
     InternLM2_START_DOCSTRING,
 )
 class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
+
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
@@ -1529,45 +1682,50 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
             batch_size = inputs_embeds.shape[0]
 
         if self.config.pad_token_id is None and batch_size != 1:
-            raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
+            raise ValueError(
+                'Cannot handle batch sizes > 1 if no padding token is defined.'
+            )
         if self.config.pad_token_id is None:
             sequence_lengths = -1
         else:
             if input_ids is not None:
-                sequence_lengths = (torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1).to(
-                    logits.device
-                )
+                sequence_lengths = (torch.eq(
+                    input_ids, self.config.pad_token_id).int().argmax(-1) -
+                                    1).to(logits.device)
             else:
                 sequence_lengths = -1
 
-        pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
+        pooled_logits = logits[torch.arange(batch_size, device=logits.device),
+                               sequence_lengths]
 
         loss = None
         if labels is not None:
             labels = labels.to(logits.device)
             if self.config.problem_type is None:
                 if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
+                    self.config.problem_type = 'regression'
+                elif self.num_labels > 1 and (labels.dtype == torch.long
+                                              or labels.dtype == torch.int):
+                    self.config.problem_type = 'single_label_classification'
                 else:
-                    self.config.problem_type = "multi_label_classification"
+                    self.config.problem_type = 'multi_label_classification'
 
-            if self.config.problem_type == "regression":
+            if self.config.problem_type == 'regression':
                 loss_fct = MSELoss()
                 if self.num_labels == 1:
                     loss = loss_fct(pooled_logits.squeeze(), labels.squeeze())
                 else:
                     loss = loss_fct(pooled_logits, labels)
-            elif self.config.problem_type == "single_label_classification":
+            elif self.config.problem_type == 'single_label_classification':
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(pooled_logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
+                loss = loss_fct(
+                    pooled_logits.view(-1, self.num_labels), labels.view(-1))
+            elif self.config.problem_type == 'multi_label_classification':
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(pooled_logits, labels)
         if not return_dict:
-            output = (pooled_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
+            output = (pooled_logits, ) + transformer_outputs[1:]
+            return ((loss, ) + output) if loss is not None else output
 
         return SequenceClassifierOutputWithPast(
             loss=loss,

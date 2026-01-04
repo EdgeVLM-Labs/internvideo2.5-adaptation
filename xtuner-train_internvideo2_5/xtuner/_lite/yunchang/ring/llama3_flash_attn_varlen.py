@@ -1,9 +1,8 @@
 import torch
 import torch.distributed as dist
-from flash_attn.flash_attn_interface import (
-    _flash_attn_varlen_forward,
-    _flash_attn_varlen_backward,
-)
+from flash_attn.flash_attn_interface import (_flash_attn_varlen_backward,
+                                             _flash_attn_varlen_forward)
+
 from .utils import get_default_args
 
 
@@ -35,12 +34,12 @@ def llama3_flash_attn_prepare_cu_seqlens(cu_seqlens, causal, rank, world_size):
     right = right.item()
 
     # q is always the same. just calculate the cu_seqlens for the local slice
-    cu_seqlens_q = cu_seqlens[left : right + 1].clone()
+    cu_seqlens_q = cu_seqlens[left:right + 1].clone()
     cu_seqlens_q -= rank * length_per_rank
     cu_seqlens_q[0] = 0
     cu_seqlens_q[-1] = length_per_rank
 
-    cu_seqlens_k = cu_seqlens[left : right + 1].clone()
+    cu_seqlens_k = cu_seqlens[left:right + 1].clone()
     if causal:
         # when causal, we hope
         # - the last k seq is of the same length as the last q seq
@@ -61,22 +60,22 @@ def llama3_flash_attn_prepare_cu_seqlens(cu_seqlens, causal, rank, world_size):
 
 
 def llama3_flash_attn_varlen_forward(
-    process_group,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    cu_seqlens_q,
-    cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
-    heads_k_stride,
-    local_k_slice,
-    softmax_scale,
-    dropout_p=0,
-    causal=True,
-    window_size=(-1, -1),
-    alibi_slopes=None,
-    deterministic=False,
+        process_group,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        heads_k_stride,
+        local_k_slice,
+        softmax_scale,
+        dropout_p=0,
+        causal=True,
+        window_size=(-1, -1),
+        alibi_slopes=None,
+        deterministic=False,
 ):
     out_list = []
     lse_list = []
@@ -100,14 +99,10 @@ def llama3_flash_attn_varlen_forward(
 
     async_handles.register(
         dist.all_gather_into_tensor(
-            kv_buffer_copy[0], k_0, group=process_group, async_op=True
-        )
-    )
+            kv_buffer_copy[0], k_0, group=process_group, async_op=True))
     async_handles.register(
         dist.all_gather_into_tensor(
-            kv_buffer_copy[1], v_0, group=process_group, async_op=True
-        )
-    )
+            kv_buffer_copy[1], v_0, group=process_group, async_op=True))
 
     for i in range(0, nheads_k, heads_k_stride):
         async_handles.wait()
@@ -121,37 +116,38 @@ def llama3_flash_attn_varlen_forward(
             send_v = v[:, kv_slice_left:kv_slice_right].contiguous()
             async_handles.register(
                 dist.all_gather_into_tensor(
-                    kv_buffer_copy[0], send_k, group=process_group, async_op=True
-                )
-            )
+                    kv_buffer_copy[0],
+                    send_k,
+                    group=process_group,
+                    async_op=True))
             async_handles.register(
                 dist.all_gather_into_tensor(
-                    kv_buffer_copy[1], send_v, group=process_group, async_op=True
-                )
-            )
+                    kv_buffer_copy[1],
+                    send_v,
+                    group=process_group,
+                    async_op=True))
 
-        q_i = q[:, i * nheads // nheads_k : (i + heads_k_stride) * nheads // nheads_k]
+        q_i = q[:, i * nheads // nheads_k:(i + heads_k_stride) * nheads //
+                nheads_k]
         k_i = kv_buffer[0][local_k_slice]
         v_i = kv_buffer[1][local_k_slice]
 
         params = get_default_args(_flash_attn_varlen_forward).copy()
-        params.update(
-            {
-                "q": q_i,
-                "k": k_i,
-                "v": v_i,
-                "cu_seqlens_q": cu_seqlens_q,
-                "cu_seqlens_k": cu_seqlens_k,
-                "max_seqlen_q": max_seqlen_q,
-                "max_seqlen_k": max_seqlen_k,
-                "dropout_p": dropout_p,
-                "softmax_scale": softmax_scale,
-                "causal": causal,
-                "window_size": window_size,
-                "alibi_slopes": alibi_slopes,
-                "return_softmax": True and dropout_p > 0,
-            }
-        )
+        params.update({
+            'q': q_i,
+            'k': k_i,
+            'v': v_i,
+            'cu_seqlens_q': cu_seqlens_q,
+            'cu_seqlens_k': cu_seqlens_k,
+            'max_seqlen_q': max_seqlen_q,
+            'max_seqlen_k': max_seqlen_k,
+            'dropout_p': dropout_p,
+            'softmax_scale': softmax_scale,
+            'causal': causal,
+            'window_size': window_size,
+            'alibi_slopes': alibi_slopes,
+            'return_softmax': True and dropout_p > 0,
+        })
         out, _, _, _, _, lse, _, _ = _flash_attn_varlen_forward(**params)
         out_list.append(out)
         lse_list.append(lse)
@@ -162,25 +158,25 @@ def llama3_flash_attn_varlen_forward(
 
 
 def llama3_flash_attn_varlen_backward(
-    process_group,
-    dout,
-    q,
-    k,
-    v,
-    out,
-    softmax_lse,
-    cu_seqlens_q,
-    cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
-    heads_k_stride,
-    local_k_slice,
-    softmax_scale,
-    dropout_p=0,
-    causal=True,
-    window_size=(-1, -1),
-    alibi_slopes=None,
-    deterministic=False,
+        process_group,
+        dout,
+        q,
+        k,
+        v,
+        out,
+        softmax_lse,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        heads_k_stride,
+        local_k_slice,
+        softmax_scale,
+        dropout_p=0,
+        causal=True,
+        window_size=(-1, -1),
+        alibi_slopes=None,
+        deterministic=False,
 ):
     nheads = q.shape[1]
     total_k, nheads_k, head_dim = k.shape
@@ -217,21 +213,16 @@ def llama3_flash_attn_varlen_backward(
     v_0 = v[:, :heads_k_stride].contiguous()
     async_handles.register(
         dist.all_gather_into_tensor(
-            kv_buffer_copy[0], k_0, group=process_group, async_op=True
-        )
-    )
+            kv_buffer_copy[0], k_0, group=process_group, async_op=True))
     async_handles.register(
         dist.all_gather_into_tensor(
-            kv_buffer_copy[1], v_0, group=process_group, async_op=True
-        )
-    )
+            kv_buffer_copy[1], v_0, group=process_group, async_op=True))
 
     for i in range(0, nheads_k, heads_k_stride):
         dkv_buffer.zero_()
 
-        q_slice = slice(
-            i * nheads // nheads_k, (i + heads_k_stride) * nheads // nheads_k
-        )
+        q_slice = slice(i * nheads // nheads_k,
+                        (i + heads_k_stride) * nheads // nheads_k)
         q_i = q[:, q_slice]
         dout_i = dout[:, q_slice]
         out_i = out[:, q_slice]
@@ -252,14 +243,16 @@ def llama3_flash_attn_varlen_backward(
             send_v = v[:, kv_slice_left:kv_slice_right].contiguous()
             async_handles.register(
                 dist.all_gather_into_tensor(
-                    kv_buffer_copy[0], send_k, group=process_group, async_op=True
-                )
-            )
+                    kv_buffer_copy[0],
+                    send_k,
+                    group=process_group,
+                    async_op=True))
             async_handles.register(
                 dist.all_gather_into_tensor(
-                    kv_buffer_copy[1], send_v, group=process_group, async_op=True
-                )
-            )
+                    kv_buffer_copy[1],
+                    send_v,
+                    group=process_group,
+                    async_op=True))
 
         k_i = kv_buffer[0][local_k_slice]
         v_i = kv_buffer[1][local_k_slice]
@@ -267,29 +260,27 @@ def llama3_flash_attn_varlen_backward(
         dv_i = dkv_buffer[1][local_k_slice]
 
         params = get_default_args(_flash_attn_varlen_backward).copy()
-        params.update(
-            {
-                "dout": dout_i,
-                "q": q_i,
-                "k": k_i,
-                "v": v_i,
-                "out": out_i,
-                "softmax_lse": lse_i,
-                "dq": dq_i,
-                "dk": dk_i,
-                "dv": dv_i,
-                "cu_seqlens_q": cu_seqlens_q,
-                "cu_seqlens_k": cu_seqlens_k,
-                "max_seqlen_q": max_seqlen_q,
-                "max_seqlen_k": max_seqlen_k,
-                "dropout_p": dropout_p,
-                "softmax_scale": softmax_scale,
-                "causal": causal,
-                "window_size": window_size,
-                "alibi_slopes": alibi_slopes,
-                "deterministic": deterministic,
-            }
-        )
+        params.update({
+            'dout': dout_i,
+            'q': q_i,
+            'k': k_i,
+            'v': v_i,
+            'out': out_i,
+            'softmax_lse': lse_i,
+            'dq': dq_i,
+            'dk': dk_i,
+            'dv': dv_i,
+            'cu_seqlens_q': cu_seqlens_q,
+            'cu_seqlens_k': cu_seqlens_k,
+            'max_seqlen_q': max_seqlen_q,
+            'max_seqlen_k': max_seqlen_k,
+            'dropout_p': dropout_p,
+            'softmax_scale': softmax_scale,
+            'causal': causal,
+            'window_size': window_size,
+            'alibi_slopes': alibi_slopes,
+            'deterministic': deterministic,
+        })
         _flash_attn_varlen_backward(**params)
 
         if heads_k_stride != nheads_k:
@@ -304,13 +295,14 @@ def llama3_flash_attn_varlen_backward(
         dist.reduce_scatter_tensor(dv_i, dkv_buffer[1], group=process_group)
 
         if heads_k_stride != nheads_k:
-            dk[:, i : i + heads_k_stride] = dk_i
-            dv[:, i : i + heads_k_stride] = dv_i
+            dk[:, i:i + heads_k_stride] = dk_i
+            dv[:, i:i + heads_k_stride] = dv_i
 
     return dq, dk, dv
 
 
 class Llama3FlashAttnVarlenFunc(torch.autograd.Function):
+
     @staticmethod
     def forward(
         ctx,
@@ -333,7 +325,7 @@ class Llama3FlashAttnVarlenFunc(torch.autograd.Function):
         group,
     ):
         if softmax_scale is None:
-            softmax_scale = q.shape[-1] ** (-0.5)
+            softmax_scale = q.shape[-1]**(-0.5)
 
         assert alibi_slopes is None
         k = k.contiguous()
@@ -357,7 +349,8 @@ class Llama3FlashAttnVarlenFunc(torch.autograd.Function):
             deterministic=False,
         )
         # this should be out_padded
-        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k)
+        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q,
+                              cu_seqlens_k)
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
         ctx.heads_k_stride = heads_k_stride
@@ -395,7 +388,7 @@ class Llama3FlashAttnVarlenFunc(torch.autograd.Function):
             alibi_slopes=ctx.alibi_slopes,
             deterministic=ctx.deterministic,
         )
-        return (dq, dk, dv) + (None,) * 15
+        return (dq, dk, dv) + (None, ) * 15
 
 
 def llama3_flash_attn_varlen_qkvpacked_func(

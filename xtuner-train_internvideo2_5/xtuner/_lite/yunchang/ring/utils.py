@@ -1,23 +1,22 @@
+import inspect
+from functools import cache
 from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-import inspect
-from functools import cache
 
-
-__all__ = ["update_out_and_lse", "RingComm", "get_default_args"]
+__all__ = ['update_out_and_lse', 'RingComm', 'get_default_args']
 
 
 @cache
 def get_default_args(func):
     spec = inspect.getfullargspec(func)
     defaults = spec.defaults if spec.defaults is not None else ()
-    padded_defaults = (None,) * (len(spec.args) - len(defaults)) + defaults
+    padded_defaults = (None, ) * (len(spec.args) - len(defaults)) + defaults
     args = dict(zip(spec.args, padded_defaults))
-    if "softcap" in args:
-        args["softcap"] = 0.0
+    if 'softcap' in args:
+        args['softcap'] = 0.0
     return args
 
 
@@ -51,14 +50,14 @@ def update_out_and_lse(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     if out is None:
         if slice_ is not None:
-            raise RuntimeError("first update_out_and_lse should not pass slice_ args")
+            raise RuntimeError(
+                'first update_out_and_lse should not pass slice_ args')
         out = block_out.to(torch.float32)
         lse = block_lse.transpose(-2, -1).unsqueeze(dim=-1)
     elif slice_ is not None:
         slice_out, slice_lse = out[slice_], lse[slice_]
-        slice_out, slice_lse = _update_out_and_lse(
-            slice_out, slice_lse, block_out, block_lse
-        )
+        slice_out, slice_lse = _update_out_and_lse(slice_out, slice_lse,
+                                                   block_out, block_lse)
         out[slice_], lse[slice_] = slice_out, slice_lse
     else:
         out, lse = _update_out_and_lse(out, lse, block_out, block_lse)
@@ -70,7 +69,7 @@ def flatten_varlen_lse(lse, cu_seqlens):
     new_lse = []
     for i in range(len(cu_seqlens) - 1):
         start, end = cu_seqlens[i], cu_seqlens[i + 1]
-        new_lse.append(lse[i, :, : end - start])
+        new_lse.append(lse[i, :, :end - start])
     return torch.cat(new_lse, dim=1)
 
 
@@ -78,16 +77,17 @@ def flatten_varlen_lse(lse, cu_seqlens):
 def unflatten_varlen_lse(lse, cu_seqlens, max_seqlen: int):
     num_seq = len(cu_seqlens) - 1
     num_head = lse.shape[-2]
-    new_lse = torch.empty(
-        (num_seq, max_seqlen, num_head, 1), dtype=torch.float32, device=lse.device
-    )
+    new_lse = torch.empty((num_seq, max_seqlen, num_head, 1),
+                          dtype=torch.float32,
+                          device=lse.device)
     for i in range(num_seq):
         start, end = cu_seqlens[i], cu_seqlens[i + 1]
-        new_lse[i, : end - start] = lse[start:end]
+        new_lse[i, :end - start] = lse[start:end]
     return new_lse.squeeze(dim=-1).transpose(1, 2).contiguous()
 
 
 class RingComm:
+
     def __init__(self, process_group: dist.ProcessGroup):
         self._process_group = process_group
         self._ops = []
@@ -99,33 +99,35 @@ class RingComm:
         self.recv_rank = (self.rank - 1) % self.world_size
 
         if process_group is not None:
-            self.send_rank = dist.get_global_rank(self._process_group, self.send_rank)
-            self.recv_rank = dist.get_global_rank(self._process_group, self.recv_rank)
+            self.send_rank = dist.get_global_rank(self._process_group,
+                                                  self.send_rank)
+            self.recv_rank = dist.get_global_rank(self._process_group,
+                                                  self.recv_rank)
 
-    def send_recv(
-        self, to_send: torch.Tensor, recv_tensor: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def send_recv(self,
+                  to_send: torch.Tensor,
+                  recv_tensor: Optional[torch.Tensor] = None) -> torch.Tensor:
         if recv_tensor is None:
             res = torch.empty_like(to_send)
         else:
             res = recv_tensor
 
         send_op = dist.P2POp(
-            dist.isend, to_send, self.send_rank, group=self._process_group
-        )
-        recv_op = dist.P2POp(dist.irecv, res, self.recv_rank, group=self._process_group)
+            dist.isend, to_send, self.send_rank, group=self._process_group)
+        recv_op = dist.P2POp(
+            dist.irecv, res, self.recv_rank, group=self._process_group)
         self._ops.append(send_op)
         self._ops.append(recv_op)
         return res
 
     def commit(self):
         if self._reqs is not None:
-            raise RuntimeError("commit called twice")
+            raise RuntimeError('commit called twice')
         self._reqs = dist.batch_isend_irecv(self._ops)
 
     def wait(self):
         if self._reqs is None:
-            raise RuntimeError("wait called before commit")
+            raise RuntimeError('wait called before commit')
         for req in self._reqs:
             req.wait()
         self._reqs = None

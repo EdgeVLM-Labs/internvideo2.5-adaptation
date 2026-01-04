@@ -1,6 +1,7 @@
-#  How to finetuning InternVideo2.5?
+# How to finetuning InternVideo2.5?
 
 Note: We only support the training with **video data**.
+
 ## Install
 
 ```
@@ -16,10 +17,13 @@ pip install -e .
 ## Start to training
 
 If you need to use data packing to speed up:
+
 ```bash
 bash ft_internvideo_2_5_datapacking.sh
 ```
+
 otherwise:
+
 ```bash
 bash ft_internvideo_2_5.sh
 ```

@@ -2,8 +2,12 @@ from contextlib import contextmanager
 
 import torch
 
+
 @contextmanager
-def packed_sequence(num_tokens, enable=False, sp_size=1, skip_position_ids=False):
+def packed_sequence(num_tokens,
+                    enable=False,
+                    sp_size=1,
+                    skip_position_ids=False):
     from mmengine import MessageHub
     ctx = MessageHub.get_instance('packed_sequence')
 
@@ -40,4 +44,3 @@ def packed_sequence(num_tokens, enable=False, sp_size=1, skip_position_ids=False
     ctx.update_info('position_ids', None)
     ctx.update_info('cumulative_lengths', None)
     ctx.update_info('max_seqlen', None)
-

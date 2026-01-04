@@ -76,7 +76,8 @@ def set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree):
         'cuda', (dp_size, sp_size), mesh_dim_names=('dp', 'sp'))
     # TODO HHA: 非常关键，顺序不能错，不能是 (dp_size, sp_ulysses_degree， sp_ring_degree)
     device_mesh = init_device_mesh(
-        'cuda', (dp_size, sp_ring_degree, sp_ulysses_degree), mesh_dim_names=('dp', 'sp_ring', 'sp_ulysses'))
+        'cuda', (dp_size, sp_ring_degree, sp_ulysses_degree),
+        mesh_dim_names=('dp', 'sp_ring', 'sp_ulysses'))
     global _DP_MESH, _SP_ULYESS_MESH, _SP_RING_MESH, _SP_MESH
     _DP_MESH = device_mesh['dp']
     _SP_ULYESS_MESH = device_mesh['sp_ulysses']
@@ -198,4 +199,3 @@ def get_tp_world_size():
     else:
         _TP_WORLD_SIZE = dist.get_world_size(_TP_GROUP)
     return _TP_WORLD_SIZE
-

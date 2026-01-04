@@ -2,45 +2,49 @@
 import warnings
 
 # display once
-warnings.filterwarnings("ignore", message=".*torch.cpu.amp.autocast.*")
+warnings.filterwarnings('ignore', message='.*torch.cpu.amp.autocast.*')
 
 import argparse
+import json
 import math
 import os
+import random
 import time
 from copy import deepcopy
 from datetime import timedelta
 from functools import partial
-import random
+
 import torch
 import torch.distributed as dist
 from mmengine.runner import set_random_seed
 from PIL import Image
-import json
+from torch.distributed._composable.fsdp import (MixedPrecisionPolicy,
+                                                fully_shard)
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
-from xtuner._lite.parallel.new_setup import setup_parallel, \
-    get_fsdp_mesh, get_dp_mesh, get_tp_mesh, get_world_mesh, get_sp_mesh, \
-    profile_time_and_memory, get_torch_device_module
-from torch.distributed._composable.fsdp import MixedPrecisionPolicy
-from xtuner._lite import get_logger
-from xtuner._lite.accelerate import (LoadWoInit,
-                                     dispatch_modules, packed_sequence)
-from xtuner._lite.accelerate.fsdp import clip_grad_norm_
-from torch.distributed._composable.fsdp import fully_shard
-from transformers import (AutoConfig, AutoTokenizer, AutoModel)
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-from xtuner._lite.datasets.dataset_fn import check_args, \
-    set_logger_envs, build_train_dataloader, build_dataset, BaseOrigDataset, \
-    _apply_exif_orientation, _prepare_input, is_interval
-from xtuner._lite.modelings.model_fn import map_meta_modules, lazy_init_megatron, save_ckpt, resume
+from xtuner._lite import get_logger
+from xtuner._lite.accelerate import (LoadWoInit, dispatch_modules,
+                                     packed_sequence)
+from xtuner._lite.accelerate.fsdp import clip_grad_norm_
 from xtuner._lite.checkpoint import checkpoint
-from xtuner._lite.internvl.dataset import (dynamic_preprocess, preprocess,
+from xtuner._lite.datasets.dataset_fn import (
+    BaseOrigDataset, _apply_exif_orientation, _prepare_input, build_dataset,
+    build_train_dataloader, check_args, is_interval, set_logger_envs)
+from xtuner._lite.internvl.dataset import (TCSLoader, build_transform,
+                                           dynamic_num_patch,
+                                           dynamic_preprocess, preprocess,
                                            preprocess_internlm, preprocess_mpt,
-                                           preprocess_phi3, build_transform, preprocess_phi3_fast,
-                                           dynamic_num_patch)
+                                           preprocess_phi3,
+                                           preprocess_phi3_fast)
 from xtuner._lite.internvl.v1_5.modeling_intern_vit import InternVisionModel
-from xtuner._lite.internvl.dataset import TCSLoader
+from xtuner._lite.modelings.model_fn import (lazy_init_megatron,
+                                             map_meta_modules, resume,
+                                             save_ckpt)
+from xtuner._lite.parallel.new_setup import (
+    get_dp_mesh, get_fsdp_mesh, get_sp_mesh, get_torch_device_module,
+    get_tp_mesh, get_world_mesh, profile_time_and_memory, setup_parallel)
 
 logger = get_logger()
 
@@ -62,9 +66,7 @@ def parse_args():
         action='store_true',
         help="Not updating vit's parameters")
     model_args.add_argument(
-        '--use-fast-tokenizer',
-        action='store_true',
-        help="")
+        '--use-fast-tokenizer', action='store_true', help='')
     model_args.add_argument(
         '--dtype',
         default='auto',
@@ -86,11 +88,7 @@ def parse_args():
         choices=['full', 'hybrid', 'no', 'zero2'],
         help=('The sharding strategy to be used for distributed training.'))
     model_args.add_argument('--sp-size', type=int, default=1, help='')
-    model_args.add_argument(
-        '--tp-size',
-        default=1,
-        type=int,
-        help="tp size")
+    model_args.add_argument('--tp-size', default=1, type=int, help='tp size')
     model_args.add_argument(
         '--ring-size',
         default=1,
@@ -204,7 +202,9 @@ def parse_args():
     parser.add_argument(
         '--log-interval', default=1, type=int, help='log interval')
     parser.add_argument(
-        '--resume', action='store_true', help='resume from the last checkpoint')
+        '--resume',
+        action='store_true',
+        help='resume from the last checkpoint')
     parser.add_argument(
         '--resume-from',
         type=str,
@@ -217,20 +217,30 @@ def parse_args():
 
 
 class LazyInternVL2Dataset(BaseOrigDataset):
-    def __init__(self, data_name, data, model_name,
-                 max_length=131072,
-                 group_by_length=False,
-                 pack_data=False, pack_data_cache_dir=None,
-                 use_fast_tokenizer=False,
-                 min_num_frames=8,  # video
-                 max_num_frames=8,  # video
-                 sampling_method='middle',  # video
-                 local_num_frames=4):  # video
 
-        _model_cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        _model_cfg.dynamic_image_size = False # NOTE 强行不开高分
+    def __init__(
+            self,
+            data_name,
+            data,
+            model_name,
+            max_length=131072,
+            group_by_length=False,
+            pack_data=False,
+            pack_data_cache_dir=None,
+            use_fast_tokenizer=False,
+            min_num_frames=8,  # video
+            max_num_frames=8,  # video
+            sampling_method='middle',  # video
+            local_num_frames=4):  # video
+
+        _model_cfg = AutoConfig.from_pretrained(
+            model_name, trust_remote_code=True)
+        _model_cfg.dynamic_image_size = False  # NOTE 强行不开高分
         architectures = _model_cfg.llm_config.architectures[0]
-        assert architectures in ['InternLM2ForCausalLM', 'Phi3ForCausalLM', 'LlamaForCausalLM', "Qwen2ForCausalLM"]
+        assert architectures in [
+            'InternLM2ForCausalLM', 'Phi3ForCausalLM', 'LlamaForCausalLM',
+            'Qwen2ForCausalLM'
+        ]
 
         if architectures == 'InternLM2ForCausalLM':
             self.template_name = 'internlm2-chat'
@@ -239,7 +249,7 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         elif architectures == 'LlamaForCausalLM':
             self.template_name = 'Hermes-2'
         else:
-            self.template_name = "internvl2_5"
+            self.template_name = 'internvl2_5'
 
         self.image_size = _model_cfg.force_image_size or _model_cfg.vision_config.image_size
         self.patch_size = _model_cfg.vision_config.patch_size
@@ -250,35 +260,38 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         self.downsample_ratio = _model_cfg.downsample_ratio
         # self.num_image_token = int((self.image_size // self.patch_size) ** 2 * (self.downsample_ratio ** 2))
         self.num_image_token = 256 // 16
-        self.num_video_token = self.num_image_token # NOTE 写死了，256x1 144x7
-        
-        logger.info(f'[Dataset] num_image_token={self.num_image_token}, num_video_token={self.num_video_token}')
-        
+        self.num_video_token = self.num_image_token  # NOTE 写死了，256x1 144x7
+
+        logger.info(
+            f'[Dataset] num_image_token={self.num_image_token}, num_video_token={self.num_video_token}'
+        )
+
         self.use_fast_tokenizer = use_fast_tokenizer
-        logger.info(f'Using Fast Tokenzier: {use_fast_tokenizer} for training.')
-        tokenizer = AutoTokenizer.from_pretrained(model_name,
-                                                  use_fast=use_fast_tokenizer,
-                                                  trust_remote_code=True)
+        logger.info(
+            f'Using Fast Tokenzier: {use_fast_tokenizer} for training.')
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name, use_fast=use_fast_tokenizer, trust_remote_code=True)
         tokenizer.model_max_length = max_length
         self.tcs_loader = TCSLoader()
         self.model_max_length = max_length
-        
 
         # video
         self.min_num_frames = min_num_frames
         self.max_num_frames = max_num_frames
-        self.local_num_frames = 8 # NOTE 写死了
+        self.local_num_frames = 8  # NOTE 写死了
         self.sampling_method = sampling_method
-        self.video_read_type = data.get("video_read_type", "decord")
-        logger.info(f"This data={data}")
+        self.video_read_type = data.get('video_read_type', 'decord')
+        logger.info(f'This data={data}')
 
-        super().__init__(data_name, data, None,
-                         tokenizer=tokenizer,
-                         max_length=-1,
-                         group_by_length=group_by_length,
-                         pack_data=pack_data,
-                         pack_data_cache_dir=pack_data_cache_dir)
-
+        super().__init__(
+            data_name,
+            data,
+            None,
+            tokenizer=tokenizer,
+            max_length=-1,
+            group_by_length=group_by_length,
+            pack_data=pack_data,
+            pack_data_cache_dir=pack_data_cache_dir)
 
     def calc_group_len(self):
         group_length = []
@@ -296,20 +309,26 @@ class LazyInternVL2Dataset(BaseOrigDataset):
                 is_media = True
 
             if 'length' in data_item:
-                token_length = data_item['length']  # Use precomputed length if available
+                token_length = data_item[
+                    'length']  # Use precomputed length if available
             else:
                 # Compute token length using the tokenizer
-                conversations = '\n'.join([temp['value'] for temp in data_item['conversations']])
+                conversations = '\n'.join(
+                    [temp['value'] for temp in data_item['conversations']])
                 str_length = len(conversations)
                 if str_length not in conv2length:
                     token_length = self.tokenizer(
-                        conversations, return_tensors='pt', padding=False, truncation=False,
+                        conversations,
+                        return_tensors='pt',
+                        padding=False,
+                        truncation=False,
                     ).input_ids.size(1)
                     if 'video' in data_item and data_item['video'] is not None:
                         # TODO: 暂时写死
                         token_length += self.num_image_token * self.max_num_frames
                     else:
-                        conv2length[str_length] = token_length + self.num_image_token * (
+                        conv2length[
+                            str_length] = token_length + self.num_image_token * (
                                 self.max_dynamic_patch + self.use_thumbnail)
                 else:
                     token_length = conv2length[str_length]
@@ -325,11 +344,15 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         if self._is_jsonl:
             data_item = json.loads(data_item)
         if 'image' in data_item and data_item['image'] is not None:
-            if type(data_item['image']) == list and len(data_item['image']) > 1:
-                num_tokens = self.multi_modal_multi_image_get_item(data_item, pack_data=True)
+            if type(data_item['image']) == list and len(
+                    data_item['image']) > 1:
+                num_tokens = self.multi_modal_multi_image_get_item(
+                    data_item, pack_data=True)
             else:
-                num_tokens = self.multi_modal_get_item(data_item, pack_data=True)
-        elif 'video' in data_item and data_item['video'] is not None and data_item['video'] != '':
+                num_tokens = self.multi_modal_get_item(
+                    data_item, pack_data=True)
+        elif 'video' in data_item and data_item[
+                'video'] is not None and data_item['video'] != '':
             num_tokens = self.video_get_item(data_item, pack_data=True)
         else:
             num_tokens = self.pure_text_get_item(data_item, pack_data=True)
@@ -353,8 +376,8 @@ class LazyInternVL2Dataset(BaseOrigDataset):
 
     def _get_transform(self):
         # Build transformation function
-        transform = build_transform(is_train=False, input_size=self.image_size,
-                                    pad2square=False)
+        transform = build_transform(
+            is_train=False, input_size=self.image_size, pad2square=False)
         return transform
 
     def load_image(self, image_path):
@@ -364,11 +387,10 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         return Image.open(image_path).convert('RGB')
 
     def multi_modal_get_item(self, data_item, pack_data=False):
-        raise NotImplementedError("Only support video.")
+        raise NotImplementedError('Only support video.')
 
     def multi_modal_multi_image_get_item(self, data_item, pack_data=False):
-        raise NotImplementedError("Only support video.")
-
+        raise NotImplementedError('Only support video.')
 
     def _get_num_frames_by_duration(self, duration):
         if self.local_num_frames != -1:
@@ -391,11 +413,12 @@ class LazyInternVL2Dataset(BaseOrigDataset):
 
         # Ensure the first conversation contains a video placeholder
         if '<image>' not in data_item['conversations'][0]['value']:
-            data_item['conversations'][0]['value'] = '<image>\n' + data_item['conversations'][0]['value']
+            data_item['conversations'][0][
+                'value'] = '<image>\n' + data_item['conversations'][0]['value']
 
         # Get the video file path
         video_file = data_item['video']
-        assert isinstance(video_file, str), f"Not support:{video_file}!!"
+        assert isinstance(video_file, str), f'Not support:{video_file}!!'
         video_path = os.path.join(self.root, video_file)
 
         if 'start' in data_item:
@@ -414,7 +437,7 @@ class LazyInternVL2Dataset(BaseOrigDataset):
             # assert self.max_num_frames == self.min_num_frames
             # num_frames = self.min_num_frames
             image_list = [0] * num_frames
-            
+
         else:
 
             image_list = self.tcs_loader(
@@ -424,30 +447,37 @@ class LazyInternVL2Dataset(BaseOrigDataset):
                 min_num_frames=num_frames,
                 sample='middle',
                 video_read_type=self.video_read_type,
-                local_num_frames=self.local_num_frames, 
+                local_num_frames=self.local_num_frames,
                 clip=clip)[0]
-            
+
             assert len(image_list) == num_frames
 
-        msg = f"\nThe video lasts for {duration:.2f} seconds, and {num_frames} frames are uniformly sampled from it. "
+        msg = f'\nThe video lasts for {duration:.2f} seconds, and {num_frames} frames are uniformly sampled from it. '
         # Generate special tokens for each video frame
-        special_tokens = msg.strip() + '\n' + '\n'.join(['Frame{}: <image>'.format(i + 1) for i in range(len(image_list))])
-        
+        special_tokens = msg.strip() + '\n' + '\n'.join(
+            [f'Frame{i + 1}: <image>' for i in range(len(image_list))])
+
         if '<image>\n' in data_item['conversations'][0]['value']:
-            data_item['conversations'][0]['value'] = data_item['conversations'][0]['value'].replace(
-                '<image>\n', special_tokens)
+            data_item['conversations'][0]['value'] = data_item[
+                'conversations'][0]['value'].replace('<image>\n',
+                                                     special_tokens)
         else:
-            data_item['conversations'][0]['value'] = data_item['conversations'][0]['value'].replace(
-                '<image>', special_tokens)
+            data_item['conversations'][0]['value'] = data_item[
+                'conversations'][0]['value'].replace('<image>', special_tokens)
 
         # Select the appropriate preprocessing function based on the template name
         preprocess_function = self._get_preprocess_function()
 
         if pack_data:
             num_image_tokens = [self.num_video_token] * len(image_list)
-            ret = preprocess_function(self.template_name, [deepcopy(data_item['conversations'])],
-                                      self.tokenizer, num_image_tokens, group_by_length=True,
-                                      ds_name=self.data_name, num_image=len(image_list), model_max_length=self.model_max_length)
+            ret = preprocess_function(
+                self.template_name, [deepcopy(data_item['conversations'])],
+                self.tokenizer,
+                num_image_tokens,
+                group_by_length=True,
+                ds_name=self.data_name,
+                num_image=len(image_list),
+                model_max_length=self.model_max_length)
             return len(ret['input_ids'][0])
 
         # Transform each frame image and stack them into a tensor
@@ -457,9 +487,14 @@ class LazyInternVL2Dataset(BaseOrigDataset):
 
         # Preprocess the conversations and generate the return dictionary
         num_image_tokens = [self.num_video_token] * num_patches
-        ret = preprocess_function(self.template_name, [deepcopy(data_item['conversations'])],
-                                  self.tokenizer, num_image_tokens, group_by_length=True,
-                                  ds_name=self.data_name, num_image=num_patches, model_max_length=self.model_max_length)
+        ret = preprocess_function(
+            self.template_name, [deepcopy(data_item['conversations'])],
+            self.tokenizer,
+            num_image_tokens,
+            group_by_length=True,
+            ds_name=self.data_name,
+            num_image=num_patches,
+            model_max_length=self.model_max_length)
         ret = dict(
             input_ids=ret['input_ids'][0],
             labels=ret['labels'][0],
@@ -467,8 +502,7 @@ class LazyInternVL2Dataset(BaseOrigDataset):
             image_flags=torch.tensor([1] * num_patches, dtype=torch.long),
             num_tokens=[len(ret['input_ids'][0])],
             num_img_tokens=num_image_tokens,
-            num_imgs=[num_patches]
-        )
+            num_imgs=[num_patches])
         return ret
 
     def pure_text_get_item(self, data_item, pack_data=False):
@@ -476,10 +510,13 @@ class LazyInternVL2Dataset(BaseOrigDataset):
 
         if pack_data:
             # Preprocess the conversations and generate the return dictionary
-            ret = preprocess_function(self.template_name, [deepcopy(data_item['conversations'])],
-                                      self.tokenizer, [0],
-                                      text_only=True,
-                                      group_by_length=True, ds_name=self.data_name, model_max_length=self.model_max_length)
+            ret = preprocess_function(
+                self.template_name, [deepcopy(data_item['conversations'])],
+                self.tokenizer, [0],
+                text_only=True,
+                group_by_length=True,
+                ds_name=self.data_name,
+                model_max_length=self.model_max_length)
 
             return len(ret['input_ids'][0])
 
@@ -490,8 +527,12 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         image = Image.new('RGB', (224, 224), (255, 255, 255))
 
         # Dynamically preprocess the image to generate patches
-        images = dynamic_preprocess(image, min_num=self.min_dynamic_patch, max_num=1,
-                                    image_size=self.image_size, use_thumbnail=self.use_thumbnail)
+        images = dynamic_preprocess(
+            image,
+            min_num=self.min_dynamic_patch,
+            max_num=1,
+            image_size=self.image_size,
+            use_thumbnail=self.use_thumbnail)
 
         # Apply the transformation to each image patch and stack them into a tensor
         pixel_values = [transform(image) for image in images]
@@ -502,10 +543,13 @@ class LazyInternVL2Dataset(BaseOrigDataset):
         assert num_patches == 1, f'The number of patches should be 1, but got {num_patches}.'
 
         # Preprocess the conversations and generate the return dictionary
-        ret = preprocess_function(self.template_name, [deepcopy(data_item['conversations'])],
-                                  self.tokenizer, [self.num_image_token * num_patches],
-                                  text_only=True,
-                                  group_by_length=True, ds_name=self.data_name, model_max_length=self.model_max_length)
+        ret = preprocess_function(
+            self.template_name, [deepcopy(data_item['conversations'])],
+            self.tokenizer, [self.num_image_token * num_patches],
+            text_only=True,
+            group_by_length=True,
+            ds_name=self.data_name,
+            model_max_length=self.model_max_length)
         # Create the final return dictionary
         ret = dict(
             input_ids=ret['input_ids'][0],
@@ -526,11 +570,13 @@ class LazyInternVL2Dataset(BaseOrigDataset):
                 if self._is_jsonl:
                     data_item = json.loads(data_item)
                 if 'image' in data_item and data_item['image'] is not None:
-                    if type(data_item['image']) == list and len(data_item['image']) > 1:
+                    if type(data_item['image']) == list and len(
+                            data_item['image']) > 1:
                         ret = self.multi_modal_multi_image_get_item(data_item)
                     else:
                         ret = self.multi_modal_get_item(data_item)
-                elif 'video' in data_item and data_item['video'] is not None and data_item['video'] != '':
+                elif 'video' in data_item and data_item[
+                        'video'] is not None and data_item['video'] != '':
                     ret = self.video_get_item(data_item)
                 else:
                     ret = self.pure_text_get_item(data_item)
@@ -588,15 +634,22 @@ def packing_collate(features, pack_batch=True, pad_id=0, sp_size=1):
     if sp_size > 1:
         if input_ids.shape[1] % sp_size != 0:
             pad_len = sp_size - input_ids.shape[1] % sp_size
-            input_ids = torch.cat([input_ids,
-                                   torch.full((1, pad_len), pad_id, dtype=torch.long)], dim=1)
-            labels = torch.cat([labels,
-                                torch.full((1, pad_len), -100, dtype=torch.long)], dim=1)
-            num_tokens = torch.cat([num_tokens,
-                                    torch.full((1,), pad_len, dtype=torch.int)], dim=0)
+            input_ids = torch.cat([
+                input_ids,
+                torch.full((1, pad_len), pad_id, dtype=torch.long)
+            ],
+                                  dim=1)
+            labels = torch.cat(
+                [labels,
+                 torch.full((1, pad_len), -100, dtype=torch.long)],
+                dim=1)
+            num_tokens = torch.cat(
+                [num_tokens,
+                 torch.full((1, ), pad_len, dtype=torch.int)],
+                dim=0)
         else:
-            num_tokens = torch.cat([num_tokens,
-                                    torch.full((1,), 0, dtype=torch.int)], dim=0)
+            num_tokens = torch.cat(
+                [num_tokens, torch.full((1, ), 0, dtype=torch.int)], dim=0)
 
     data_dict = {
         'input_ids': input_ids,
@@ -614,7 +667,8 @@ def packing_collate(features, pack_batch=True, pad_id=0, sp_size=1):
 def build_llava_model(args, dtype=torch.float32, device='cpu'):
     with torch.device(device):
         with LoadWoInit():
-            _cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
+            _cfg = AutoConfig.from_pretrained(
+                args.model, trust_remote_code=True)
             # 防止 fsdp 构建时候 dpr 报错
             vision_model = InternVisionModel(_cfg.vision_config)
             internvl = AutoModel.from_pretrained(
@@ -623,8 +677,10 @@ def build_llava_model(args, dtype=torch.float32, device='cpu'):
                 use_flash_attn=True,
                 trust_remote_code=True,
                 torch_dtype=dtype)
-            tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-            img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
+            tokenizer = AutoTokenizer.from_pretrained(
+                args.model, trust_remote_code=True)
+            img_context_token_id = tokenizer.convert_tokens_to_ids(
+                '<IMG_CONTEXT>')
             internvl.img_context_token_id = img_context_token_id
 
         internvl.to(dtype)
@@ -708,7 +764,8 @@ def build_fsdp_model(rank0_model, meta_model, dp_mesh, tp_mesh, dtype, args):
         meta_model,
         mesh=dp_mesh,
         mp_policy=mp_policy,
-        reshard_after_forward=reshard_after_forward)  # False is zero2, True is zero3
+        reshard_after_forward=reshard_after_forward
+    )  # False is zero2, True is zero3
 
     return model
 
@@ -717,8 +774,10 @@ def llava_train(args):
     if args.liger:
         raise NotImplementedError
 
-
-    setup_parallel(tp_size=args.tp_size, sp_size=args.sp_size, sp_ring_degree=args.ring_size)
+    setup_parallel(
+        tp_size=args.tp_size,
+        sp_size=args.sp_size,
+        sp_ring_degree=args.ring_size)
     set_random_seed(args.seed)
 
     dp_mesh = get_dp_mesh()
@@ -735,34 +794,40 @@ def llava_train(args):
 
     check_args(args)
     set_logger_envs(args)
-    tokenizer = AutoTokenizer.from_pretrained(args.model,
-                                              use_fast=args.use_fast_tokenizer,
-                                              trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model, use_fast=args.use_fast_tokenizer, trust_remote_code=True)
     try:
         pad_token_id = tokenizer.pad_token_id
     except Exception as e:
-        logger.warning('Tokenizer does not have pad_token_id attribute. Use 0 instead.')
+        logger.warning(
+            'Tokenizer does not have pad_token_id attribute. Use 0 instead.')
         pad_token_id = 0
 
     with profile_time_and_memory('[Dataset & Dataloader]'):
         ds_collections = json.loads(open(args.datasets).read())
         _datasets = []
         for name, _data in ds_collections.items():
-            _dataset = LazyInternVL2Dataset(name, _data, args.model,
-                                            max_length=args.max_length,
-                                            group_by_length=args.group_by_length,
-                                            pack_data=args.dset_pack,
-                                            pack_data_cache_dir=args.dset_cache_dir,
-                                            use_fast_tokenizer=args.use_fast_tokenizer,
-                                            max_num_frames=args.max_num_frames,
-                                            min_num_frames=args.min_num_frames)
+            _dataset = LazyInternVL2Dataset(
+                name,
+                _data,
+                args.model,
+                max_length=args.max_length,
+                group_by_length=args.group_by_length,
+                pack_data=args.dset_pack,
+                pack_data_cache_dir=args.dset_cache_dir,
+                use_fast_tokenizer=args.use_fast_tokenizer,
+                max_num_frames=args.max_num_frames,
+                min_num_frames=args.min_num_frames)
             if dist.get_rank() == 0:
-                logger.info(f'[Dataset] (Original) {name}: {len(_dataset)} samples.')
+                logger.info(
+                    f'[Dataset] (Original) {name}: {len(_dataset)} samples.')
             _datasets.append(_dataset)
         train_dataset = build_dataset(args, _datasets)
         logger.warning(f'{dist.get_rank()} ===== End of all dataset =====')
-        packing_collate_partial = partial(packing_collate, pad_id=pad_token_id, sp_size=sp_size)
-        train_dataloader = build_train_dataloader(args, train_dataset, packing_collate_partial)
+        packing_collate_partial = partial(
+            packing_collate, pad_id=pad_token_id, sp_size=sp_size)
+        train_dataloader = build_train_dataloader(args, train_dataset,
+                                                  packing_collate_partial)
 
     args.dtype = 'bf16'
     dtype = torch.bfloat16
@@ -783,7 +848,8 @@ def llava_train(args):
             rank0_model = None
         dist.monitored_barrier(group=group, timeout=timeout)
 
-        fsdp_model = build_fsdp_model(rank0_model, meta_model, fsdp_mesh, world_mesh, dtype, args)
+        fsdp_model = build_fsdp_model(rank0_model, meta_model, fsdp_mesh,
+                                      world_mesh, dtype, args)
         fsdp_model.train()
         if dist.get_rank() == 0:
             logger.info(fsdp_model)
@@ -791,7 +857,10 @@ def llava_train(args):
     requried_grad_params = [
         param for param in fsdp_model.parameters() if param.requires_grad
     ]
-    requried_grad_name = [name for name, param in fsdp_model.named_parameters() if param.requires_grad]
+    requried_grad_name = [
+        name for name, param in fsdp_model.named_parameters()
+        if param.requires_grad
+    ]
     if rank == 0:
         logger.info(f'[Optimizer] {requried_grad_name}')
 
@@ -801,22 +870,30 @@ def llava_train(args):
 
     for name, param in fsdp_model.named_parameters():
         if param.requires_grad:
-            if "vision_model" in name:
+            if 'vision_model' in name:
                 logger.info(f'[Optimizer] vit_lr: {name}')
                 requried_grad_params_vit.append(param)
-            elif "mlp1" in name:
+            elif 'mlp1' in name:
                 logger.info(f'[Optimizer] connector_lr: {name}')
                 requried_grad_params_connector.append(param)
             else:
                 logger.info(f'[Optimizer] other lr: {name}')
-                requried_grad_params_llm.append(param) 
+                requried_grad_params_llm.append(param)
 
-    optimizer = AdamW(
-        [
-        {'params':requried_grad_params_vit, "lr": args.vit_lr, "weight_decay": args.wd},
-        {'params':requried_grad_params_connector, "lr": args.connector_lr, "weight_decay": args.wd},
-        {'params':requried_grad_params_llm, "lr": args.lr, "weight_decay": args.wd}
-        ], fused=False)
+    optimizer = AdamW([{
+        'params': requried_grad_params_vit,
+        'lr': args.vit_lr,
+        'weight_decay': args.wd
+    }, {
+        'params': requried_grad_params_connector,
+        'lr': args.connector_lr,
+        'weight_decay': args.wd
+    }, {
+        'params': requried_grad_params_llm,
+        'lr': args.lr,
+        'weight_decay': args.wd
+    }],
+                      fused=False)
 
     max_memory = get_torch_device_module().max_memory_allocated()
     logger.info('[Train] Begin Train Loop. The current GPU memory is '
@@ -831,7 +908,9 @@ def llava_train(args):
     per_step_iters = global_batch_size // mirco_batch_size // dp_size
     per_epoch_iters = len(train_dataloader)
     per_epoch_steps = math.ceil(per_epoch_iters / per_step_iters)
-    logger.info(f'[Optimizer] Global batch size: {global_batch_size}, Gradient accumulative counts: {per_step_iters}')
+    logger.info(
+        f'[Optimizer] Global batch size: {global_batch_size}, Gradient accumulative counts: {per_step_iters}'
+    )
     total_epochs = args.epochs
     total_steps = per_epoch_steps * total_epochs
 
@@ -855,7 +934,8 @@ def llava_train(args):
     start_step = 0
 
     if args.resume:
-        start_step = resume(args, fsdp_model, optimizer, warmup_scheduler, cosine_scheduler, start_step, total_steps)
+        start_step = resume(args, fsdp_model, optimizer, warmup_scheduler,
+                            cosine_scheduler, start_step, total_steps)
 
     start_train_t = time.time()
     torch.cuda.empty_cache()
@@ -874,11 +954,14 @@ def llava_train(args):
         if args.sp_size > 1:
             assert args.dset_pack, 'Only support soft packing with sp_size > 1.'
             logger.info(
-                f'======= Using SP mode. sp_ulysess:{args.sp_size // args.ring_size}, sp_ring:{args.ring_size}======')
+                f'======= Using SP mode. sp_ulysess:{args.sp_size // args.ring_size}, sp_ring:{args.ring_size}======'
+            )
 
         logger.info('[Train] Begin Train Loop. The current GPU memory is '
                     f'{(max_memory / 1024 ** 3):.1f}GB')
-        logger.info('The FSDP adopts a lazy design, so the first iteration will be slow.')
+        logger.info(
+            'The FSDP adopts a lazy design, so the first iteration will be slow.'
+        )
         if args.liger:
             logger.info('====== use liger kernel =====')
 
@@ -895,7 +978,8 @@ def llava_train(args):
             # be adjusted to the position before resume.
             # train_dataloader.sampler.set_epoch(epoch, inner_step)
             # train_dataloader.sampler.set_epoch(epoch, epoch_inner_step)
-            train_dataloader.sampler.set_epoch(epoch, epoch_inner_step * per_step_iters)
+            train_dataloader.sampler.set_epoch(
+                epoch, epoch_inner_step * per_step_iters)
             data_iterator = iter(train_dataloader)
 
         if step <= warmup_steps:
@@ -928,7 +1012,7 @@ def llava_train(args):
             with packed_ctx:
                 outputs = fsdp_model(**data, use_cache=False)
                 loss = outputs.loss
-                if torch.isnan(loss): # NOTE 防止sp出现nan，不确定对不对
+                if torch.isnan(loss):  # NOTE 防止sp出现nan，不确定对不对
                     loss = outputs.logits.sum() * 0
 
                 avg_iter_loss = loss / per_step_iters
@@ -942,7 +1026,8 @@ def llava_train(args):
             step_consumed_img_tokens += num_img_tokens.sum() / sp_size
             step_consumed_imgs += num_imgs.sum() / sp_size
 
-        grad_norm = clip_grad_norm_(requried_grad_params, fsdp_mesh, args.max_grad_norm)
+        grad_norm = clip_grad_norm_(requried_grad_params, fsdp_mesh,
+                                    args.max_grad_norm)
         optimizer.step()
         optimizer.zero_grad()
 
@@ -967,14 +1052,16 @@ def llava_train(args):
                 f'eta: {eta}')
 
         if is_interval(step, total_steps, checkpoint_interval):
-            save_ckpt(args, step, total_steps, fsdp_model, rank0_model, warmup_scheduler, cosine_scheduler,
-                      optimizer, max_keep_ckpts, save_hf_ckpt_names, save_pt_ckpt_names, tokenizer, processor)
+            save_ckpt(args, step, total_steps, fsdp_model, rank0_model,
+                      warmup_scheduler, cosine_scheduler, optimizer,
+                      max_keep_ckpts, save_hf_ckpt_names, save_pt_ckpt_names,
+                      tokenizer, processor)
 
     train_cost_time = time.time() - start_train_t
     m, s = divmod(train_cost_time, 60)
     h, m = divmod(m, 60)
     d, h = divmod(h, 24)
-    logger.info("[Train] Cost: %d day, %d:%d:%d" % (d, h, m, s))
+    logger.info('[Train] Cost: %d day, %d:%d:%d' % (d, h, m, s))
     # ------------------------    Training  End  ---------------------------- #
 
 

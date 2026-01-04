@@ -1,20 +1,20 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import re
 import hashlib
 import inspect
 import json
 import math
 import os
+import random
+import re
 from concurrent.futures import ThreadPoolExecutor
-from mmengine import mkdir_or_exist
+
 import numpy as np
 import torch
-from torch import distributed as dist
-from tqdm import tqdm
-import random
-
 from datasets import Dataset, concatenate_datasets
+from mmengine import mkdir_or_exist
+from torch import distributed as dist
 from torch.utils.data import ConcatDataset
+from tqdm import tqdm
 
 from xtuner._lite import get_logger
 
@@ -553,6 +553,7 @@ class SoftPackDataset(torch.utils.data.Dataset):
 
 from torch.nn.utils.rnn import pad_sequence
 
+
 class SftCollator():
 
     def __init__(self, pad_token_id=0, ignore_id=-100, pack_batch=False):
@@ -624,4 +625,3 @@ class SftCollator():
         }
 
         return data_dict
-

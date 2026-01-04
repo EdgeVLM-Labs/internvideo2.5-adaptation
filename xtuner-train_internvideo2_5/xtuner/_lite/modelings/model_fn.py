@@ -1,16 +1,19 @@
-from torch.distributed.checkpoint.stateful import Stateful
-from torch.distributed._tensor import DTensor, distribute_tensor
+import copy
+import os
+
 import torch
 import torch.distributed as dist
-from ..parallel.new_setup import get_torch_device_module
-import os
+import torch.distributed.checkpoint as dcp
+from accelerate.utils import set_module_tensor_to_device
+from torch.distributed._tensor import DTensor, distribute_tensor
 from torch.distributed.checkpoint.state_dict import (StateDictOptions,
                                                      get_model_state_dict,
-                                                     get_state_dict, set_state_dict)
-import copy
-from accelerate.utils import set_module_tensor_to_device
-import torch.distributed.checkpoint as dcp
+                                                     get_state_dict,
+                                                     set_state_dict)
+from torch.distributed.checkpoint.stateful import Stateful
+
 from .. import get_logger
+from ..parallel.new_setup import get_torch_device_module
 
 logger = get_logger()
 
@@ -25,6 +28,7 @@ def map_meta_modules(model, meta_model):
 
 
 class MetaStateful(Stateful):
+
     def __init__(self, **kwargs):
         super().__init__()
         self.kwargs = kwargs
@@ -63,7 +67,8 @@ def lazy_init_megatron(module, rank0_map, dp_mesh, tp_mesh=None, pp_mesh=None):
         for name, param in module.named_parameters(recurse=False)
     }
 
-    module.to_empty(device=get_torch_device_module().current_device(), recurse=False)
+    module.to_empty(
+        device=get_torch_device_module().current_device(), recurse=False)
 
     for name, param in module.named_parameters(recurse=False):
         dtype = param.dtype
@@ -95,12 +100,11 @@ def lazy_init_megatron(module, rank0_map, dp_mesh, tp_mesh=None, pp_mesh=None):
         buffer.data.copy_(rank0_buffer)
 
 
-def resume(args, fsdp_model, optimizer, warmup_scheduler, cosine_scheduler, start_step, total_steps):
+def resume(args, fsdp_model, optimizer, warmup_scheduler, cosine_scheduler,
+           start_step, total_steps):
     logger.info(f'[Resume] Resume from {args.resume_from}')
-    _options = StateDictOptions(
-        cpu_offload=True, ignore_frozen_params=True)
-    (shard_model_state_dict,
-     shard_optimizer_state_dict) = get_state_dict(
+    _options = StateDictOptions(cpu_offload=True, ignore_frozen_params=True)
+    (shard_model_state_dict, shard_optimizer_state_dict) = get_state_dict(
         fsdp_model, optimizer, options=_options)
     meta_stateful = MetaStateful(step=start_step, total_steps=total_steps)
     state_dict = {
@@ -116,22 +120,22 @@ def resume(args, fsdp_model, optimizer, warmup_scheduler, cosine_scheduler, star
         checkpoint_id=args.resume_from,
     )
 
-    _options = StateDictOptions(
-        cpu_offload=True, strict=False)
+    _options = StateDictOptions(cpu_offload=True, strict=False)
     set_state_dict(
         fsdp_model,
         optimizer,
-        model_state_dict=state_dict["model"],
-        optim_state_dict=state_dict["optimizer"],
-        options=_options
-    )
+        model_state_dict=state_dict['model'],
+        optim_state_dict=state_dict['optimizer'],
+        options=_options)
 
     start_step = meta_stateful['step']
     logger.info(f'[Resume] start_step to {start_step}')
     return start_step
 
-def save_ckpt(args, step, total_steps, fsdp_model, rank0_model, warmup_scheduler, cosine_scheduler, optimizer,
-              max_keep_ckpts, save_hf_ckpt_names, save_pt_ckpt_names, tokenizer, processor):
+
+def save_ckpt(args, step, total_steps, fsdp_model, rank0_model,
+              warmup_scheduler, cosine_scheduler, optimizer, max_keep_ckpts,
+              save_hf_ckpt_names, save_pt_ckpt_names, tokenizer, processor):
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     max_memory = torch.cuda.max_memory_allocated()
@@ -151,8 +155,7 @@ def save_ckpt(args, step, total_steps, fsdp_model, rank0_model, warmup_scheduler
         saved_model = copy.deepcopy(rank0_model)
         saved_model.to(torch.bfloat16)
         for name, param in full_model_state_dict.items():
-            set_module_tensor_to_device(saved_model, name, 'cpu',
-                                        param)
+            set_module_tensor_to_device(saved_model, name, 'cpu', param)
 
         saved_model.save_pretrained(hf_dir)
         if tokenizer is not None:
@@ -182,8 +185,7 @@ def save_ckpt(args, step, total_steps, fsdp_model, rank0_model, warmup_scheduler
         # Refer to https://pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html  # noqa: E501
         _options = StateDictOptions(
             cpu_offload=True, ignore_frozen_params=True)
-        (shard_model_state_dict,
-         shard_optimizer_state_dict) = get_state_dict(
+        (shard_model_state_dict, shard_optimizer_state_dict) = get_state_dict(
             fsdp_model, optimizer, options=_options)
         meta_stateful = MetaStateful(step=step + 1, total_steps=total_steps)
         # warmup_scheduler/cosine_scheduler 并不是 Stateful 对象，但是是 work 的，
@@ -210,6 +212,5 @@ def save_ckpt(args, step, total_steps, fsdp_model, rank0_model, warmup_scheduler
                 remove_pt_ckpt_name = save_pt_ckpt_names.pop(0)
                 os.system(f'rm -rf {remove_pt_ckpt_name}')
         max_memory = torch.cuda.max_memory_allocated()
-        logger.info(
-            '[Checkpoint] During saving checkpoint, the peak GPU '
-            f'memory is {max_memory / 1024 ** 3:.1f}GB.')
+        logger.info('[Checkpoint] During saving checkpoint, the peak GPU '
+                    f'memory is {max_memory / 1024 ** 3:.1f}GB.')

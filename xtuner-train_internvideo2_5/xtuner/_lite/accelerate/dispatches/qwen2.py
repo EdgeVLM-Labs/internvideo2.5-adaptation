@@ -1,17 +1,21 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Optional, Tuple
 import os
+from typing import Optional, Tuple
+
 import torch
 from mmengine import MessageHub
 
-from ._attention import SUPPORT_FLASH2, flash_attn_wo_mask, varlen_flash_attn
+from xtuner._lite.parallel.new_setup import (get_ring_group,
+                                             get_ring_world_size,
+                                             get_sp_world_size,
+                                             get_ulysess_group)
 from xtuner._lite.yunchang import llama3_varlen_attention_sp_ulysses_ring
-from xtuner._lite.parallel.new_setup import get_ring_group, get_ring_world_size, get_sp_world_size, get_ulysess_group
+from ._attention import SUPPORT_FLASH2, flash_attn_wo_mask, varlen_flash_attn
 
 
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
+    x1 = x[..., :x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2:]
     return torch.cat((-x2, x1), dim=-1)
 
@@ -44,17 +48,18 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 
 
 def qwen2_varlen_attn_forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value=None,
-        output_attentions: bool = False,
-        use_cache: bool = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+    self,
+    hidden_states: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    past_key_value=None,
+    output_attentions: bool = False,
+    use_cache: bool = False,
+    cache_position: Optional[torch.LongTensor] = None,
+    position_embeddings: Optional[Tuple[
+        torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
-Optional[Tuple[torch.Tensor]]]:
+           Optional[Tuple[torch.Tensor]]]:
     bsz, q_len, _ = hidden_states.size()
     attn_context = MessageHub.get_instance('packed_sequence')
 
@@ -68,17 +73,26 @@ Optional[Tuple[torch.Tensor]]]:
     # Flash attention requires the input to have the shape
     # batch_size x seq_length x head_dim x hidden_dim
     # therefore we just need to keep the original shape
-    query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-    value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+    query_states = query_states.view(bsz, q_len, self.num_heads,
+                                     self.head_dim).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, self.num_key_value_heads,
+                                 self.head_dim).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, self.num_key_value_heads,
+                                     self.head_dim).transpose(1, 2)
 
     cos, sin = position_embeddings
-    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states,
+                                                    cos, sin)
 
     if past_key_value is not None:
         # sin and cos are specific to RoPE models; cache_position needed for the static cache
-        cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-        key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        cache_kwargs = {
+            'sin': sin,
+            'cos': cos,
+            'cache_position': cache_position
+        }
+        key_states, value_states = past_key_value.update(
+            key_states, value_states, self.layer_idx, cache_kwargs)
 
     # TODO: These transpose are quite inefficient but Flash Attention requires the layout [batch_size, sequence_length, num_heads, head_dim]. We would need to refactor the KV cache
     # to be able to avoid many of these transpose/reshape/view.
@@ -99,7 +113,7 @@ Optional[Tuple[torch.Tensor]]]:
         if torch.is_autocast_enabled():
             target_dtype = torch.get_autocast_gpu_dtype()
         # Handle the case where the model is quantized
-        elif hasattr(self.config, "_pre_quantization_dtype"):
+        elif hasattr(self.config, '_pre_quantization_dtype'):
             target_dtype = self.config._pre_quantization_dtype
         else:
             target_dtype = self.q_proj.weight.dtype
@@ -115,9 +129,10 @@ Optional[Tuple[torch.Tensor]]]:
         force_to_new_sp = os.environ.get('FORCE_TO_NEW_SP')
         if get_ring_world_size() > 1 or force_to_new_sp:
             # 只有开启了 ring 情况下才运行，如果只是普通 sp，则依然运行原先逻辑
-            assert cumulative_lengths[-1] % get_sp_world_size() == 0, f'==={cumulative_lengths[-1]}===='
-            q_unpad, k_unpad, v_unpad = query_states.flatten(0, 1), key_states.flatten(
-                0, 1), value_states.flatten(0, 1)
+            assert cumulative_lengths[-1] % get_sp_world_size(
+            ) == 0, f'==={cumulative_lengths[-1]}===='
+            q_unpad, k_unpad, v_unpad = query_states.flatten(
+                0, 1), key_states.flatten(0, 1), value_states.flatten(0, 1)
             attn_output = llama3_varlen_attention_sp_ulysses_ring(
                 q_unpad,
                 k_unpad,
@@ -127,13 +142,13 @@ Optional[Tuple[torch.Tensor]]]:
                 ring_pg=get_ring_group(),
                 causal=True,
                 # 如果想更省显存，可以设置为 1。-1 表示不切分
-                heads_k_stride=-1
-            )
+                heads_k_stride=-1)
             attn_output = attn_output.unsqueeze(0)
         else:
             max_seqlen = attn_context.get_info('max_seqlen')
-            attn_output = varlen_flash_attn(query_states, key_states, value_states,
-                                            cumulative_lengths, max_seqlen)
+            attn_output = varlen_flash_attn(query_states, key_states,
+                                            value_states, cumulative_lengths,
+                                            max_seqlen)
     else:
         attn_output = flash_attn_wo_mask(
             query_states,

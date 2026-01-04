@@ -1,16 +1,20 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Optional, Tuple
 import inspect
-
 import os
+from typing import Optional, Tuple
+
 import torch
 from einops import rearrange
 from mmengine import MessageHub
 from transformers.cache_utils import StaticCache
 
-from ._attention import SUPPORT_FLASH2, flash_attn_wo_mask, varlen_flash_attn
+from xtuner._lite.parallel.new_setup import (get_ring_group,
+                                             get_ring_world_size,
+                                             get_sp_world_size,
+                                             get_ulysess_group)
 from xtuner._lite.yunchang import llama3_varlen_attention_sp_ulysses_ring
-from xtuner._lite.parallel.new_setup import get_ring_group, get_ring_world_size,get_sp_world_size, get_ulysess_group
+from ._attention import SUPPORT_FLASH2, flash_attn_wo_mask, varlen_flash_attn
+
 
 class InternLM2RotaryEmbedding(torch.nn.Module):
 
@@ -71,6 +75,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
+
 
 def apply_rotary_pos_emb_old(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     """Applies Rotary Position Embedding to the query and key tensors."""
@@ -162,12 +167,14 @@ def _internlm2_varlen_attn_forward(
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             kv_seq_len += past_key_value[0].shape[-2]
-        cos, sin = self.rotary_emb(value_states, seq_len=position_ids.max() + 1)
-        query_states, key_states = apply_rotary_pos_emb_old(query_states, key_states, cos, sin, position_ids)
+        cos, sin = self.rotary_emb(
+            value_states, seq_len=position_ids.max() + 1)
+        query_states, key_states = apply_rotary_pos_emb_old(
+            query_states, key_states, cos, sin, position_ids)
     else:
         cos, sin = self.rotary_emb(value_states, position_ids)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states,
-                                                        cos, sin)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin)
 
     if past_key_value is not None:
         # sin and cos are specific to RoPE models;
@@ -216,9 +223,10 @@ def _internlm2_varlen_attn_forward(
         force_to_new_sp = os.environ.get('FORCE_TO_NEW_SP')
         if get_ring_world_size() > 1 or force_to_new_sp:
             # 只有开启了 ring 情况下才运行，如果只是普通 sp，则依然运行原先逻辑
-            assert cumulative_lengths[-1] % get_sp_world_size() == 0, f'==={cumulative_lengths[-1]}===='
-            q_unpad, k_unpad, v_unpad = query_states.flatten(0, 1), key_states.flatten(
-                0, 1), value_states.flatten(0, 1)
+            assert cumulative_lengths[-1] % get_sp_world_size(
+            ) == 0, f'==={cumulative_lengths[-1]}===='
+            q_unpad, k_unpad, v_unpad = query_states.flatten(
+                0, 1), key_states.flatten(0, 1), value_states.flatten(0, 1)
             attn_output = llama3_varlen_attention_sp_ulysses_ring(
                 q_unpad,
                 k_unpad,
@@ -228,13 +236,13 @@ def _internlm2_varlen_attn_forward(
                 ring_pg=get_ring_group(),
                 causal=True,
                 # 如果想更省显存，可以设置为 1。-1 表示不切分
-                heads_k_stride=-1
-            )
+                heads_k_stride=-1)
             attn_output = attn_output.unsqueeze(0)
         else:
             max_seqlen = attn_context.get_info('max_seqlen')
-            attn_output = varlen_flash_attn(query_states, key_states, value_states,
-                                            cumulative_lengths, max_seqlen)
+            attn_output = varlen_flash_attn(query_states, key_states,
+                                            value_states, cumulative_lengths,
+                                            max_seqlen)
     else:
         attn_output = flash_attn_wo_mask(
             query_states,

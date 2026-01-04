@@ -9,12 +9,13 @@ CHAT_TEMPLATE_MAP = {
         assistant='{assistant}<|im_end|>',
         stop_words=['<|im_end|>']),
     'llama3':
-        HybridChatTemplate(
-            system='<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>',
-            user='<|start_header_id|>user<|end_header_id|>\n\n{user}<|eot_id|>'
-            '<|start_header_id|>assistant<|end_header_id|>\n\n',
-            assistant='{assistant}<|eot_id|>\n\n',
-            stop_words=['<|eot_id|>'])
+    HybridChatTemplate(
+        system=
+        '<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>',
+        user='<|start_header_id|>user<|end_header_id|>\n\n{user}<|eot_id|>'
+        '<|start_header_id|>assistant<|end_header_id|>\n\n',
+        assistant='{assistant}<|eot_id|>\n\n',
+        stop_words=['<|eot_id|>'])
 }
 
 __all__ = ['ChatTemplate', 'HybridChatTemplate']

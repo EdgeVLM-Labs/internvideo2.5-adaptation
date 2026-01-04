@@ -1,9 +1,11 @@
+import time
+from contextlib import contextmanager
+
+import torch
 import torch.distributed as dist
 from mmengine.dist import infer_launcher, init_dist
 from torch.distributed.device_mesh import init_device_mesh
-import torch
-import time
-from contextlib import contextmanager
+
 from xtuner._lite import get_logger
 
 logger = get_logger()
@@ -95,7 +97,8 @@ def setup_parallel(sp_size=1, tp_size=1, sp_ring_degree=1):
             'cuda', (dp_size, sp_size), mesh_dim_names=('dp', 'sp'))
         # TODO HHA: 非常关键，顺序不能错，不能是 (dp_size, sp_ulysses_degree， sp_ring_degree)
         device_mesh = init_device_mesh(
-            'cuda', (dp_size, sp_ring_degree, sp_ulysses_degree), mesh_dim_names=('dp', 'sp_ring', 'sp_ulysses'))
+            'cuda', (dp_size, sp_ring_degree, sp_ulysses_degree),
+            mesh_dim_names=('dp', 'sp_ring', 'sp_ulysses'))
         global _DP_MESH, _SP_ULYESS_MESH, _SP_RING_MESH, _SP_MESH
         _DP_MESH = device_mesh['dp']
         _SP_ULYESS_MESH = device_mesh['sp_ulysses']
@@ -109,10 +112,11 @@ def setup_parallel(sp_size=1, tp_size=1, sp_ring_degree=1):
         _SP_GROUP = global_device_mesh.get_group('sp')
 
         model_mesh = init_device_mesh(
-            device, (dp_size * sp_size, tp_size), mesh_dim_names=('fsdp', 'tp'))
+            device, (dp_size * sp_size, tp_size),
+            mesh_dim_names=('fsdp', 'tp'))
 
         world_mesh = init_device_mesh(
-            device, (world_size,), mesh_dim_names=('world',))
+            device, (world_size, ), mesh_dim_names=('world', ))
 
         global _TP_MESH, _TP_GROUP, _TP_WORLD_SIZE
         _TP_MESH = model_mesh['tp']
@@ -221,4 +225,4 @@ def profile_time_and_memory(desc):
     cost_time = time.time() - start_t
 
     logger.success(f'{desc} Elapsed time {cost_time:.2f} seconds, '
-                f'peak gpu memory {max_memory/1024**3:.1f}G')
+                   f'peak gpu memory {max_memory/1024**3:.1f}G')

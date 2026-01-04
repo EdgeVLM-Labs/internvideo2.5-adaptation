@@ -9,13 +9,13 @@ import torch
 from datasets import load_from_disk
 from torch import distributed as dist
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import ConcatDataset
 from tqdm import tqdm
 
 from xtuner._lite import get_logger
 from xtuner._lite.chat import ChatMessages
 from xtuner.utils import DEFAULT_PAD_TOKEN_INDEX, IGNORE_INDEX
 from .format import OPENAI_FORMAT_MAP
-from torch.utils.data import ConcatDataset
 
 logger = get_logger()
 
@@ -229,8 +229,7 @@ class SoftPackerForText(torch.utils.data.Dataset):
             if _ori_len + sum(length_buffer) <= max_length:
                 item_buffer.append(shfl_i)
                 length_buffer.append(_ori_len)
-                max_length_one_pack = max(max_length_one_pack,
-                                          _ori_len)
+                max_length_one_pack = max(max_length_one_pack, _ori_len)
             else:
                 if len(item_buffer) > 0:
                     idx_per_pack.append(item_buffer)

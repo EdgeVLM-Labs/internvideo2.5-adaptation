@@ -1,6 +1,4 @@
-
 <div align="center">
-
 
 <h2><a href="https://www.arxiv.org/abs/2501.00574">VideoChat-Flash: Hierarchical Compression for Long-Context Video Modeling</a></h2>
 
@@ -12,13 +10,10 @@
 
 </p>
 
-
-
 </div>
 
-
-
 ## :fire: Updates
+
 - [x] **2025/06/13**: 🎉🎉🎉Our model achieves promising results on the [VideoEval-Pro](https://arxiv.org/abs/2505.14640) benchmark focused on long video understanding!
 - [x] **2025/05/10**:🔥🔥🔥 We release most video of our [training data](https://huggingface.co/datasets/OpenGVLab/VideoChat-Flash-Training-Data), Hope it can be of help to you!
 - [x] **2025/03/27**:🔥🔥 We release our dataset and evaluation codes for single-hop and multi-hop needle-in-a-haystack!
@@ -27,8 +22,8 @@
 - [x] **2025/02/12**: 🎉🎉🎉Our VideoChat-Flash-7B@448 has achieved first place on the latest Video Detail Caption Benchmark, [AuroraCap](https://rese1f.github.io/aurora-web/).
 - [x] **2025/01/15**: We provide [evaluation codes](lmms-eval_videochat) for QA & Grounding Benchmark.
 - [x] **2025/01/12**: 🔥🔥🔥Release **VideoChat2-Flash**, a powerfull MLLM built on video encoder ([InternVideo](https://github.com/OpenGVLab/InternVideo)) and LLM ([Qwen](https://github.com/QwenLM/Qwen)).
-    - We offer five models, [VideoChat2-Flash-2B@224](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-2B_res448) (Small LLM), [VideoChat2-Flash-7B@224](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2-7B_res224), [VideoChat2-Flash-7B@448](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2-7B_res448) (Overall best), [VideoChat-Flash-Qwen2_5-7B-1M](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-7B-1M_res224) (Super long video input) and [VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B) (Stronger short-term temporal understanding).
-    <!-- - We provide [online demos]() and demo codes that can be run locally. -->
+  - We offer five models, [VideoChat2-Flash-2B@224](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-2B_res448) (Small LLM), [VideoChat2-Flash-7B@224](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2-7B_res224), [VideoChat2-Flash-7B@448](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2-7B_res448) (Overall best), [VideoChat-Flash-Qwen2_5-7B-1M](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-7B-1M_res224) (Super long video input) and [VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B) (Stronger short-term temporal understanding).
+  <!-- - We provide [online demos]() and demo codes that can be run locally. -->
 
 ## 📑 Future Plan
 
@@ -48,27 +43,19 @@ As I am currently very busy with work and find it difficult to complete the abov
 **⚡Highly efficient model architecture** with exceptional inference speed, encoding each video frame into just **16 tokens**, making it **5–10** times faster than the previous model.
 ![alt text](img/model_framework.png)
 
-
-
-
 ## Demo & Inference
 
 Refer to [hf README](https://huggingface.co/OpenGVLab/VideoChat-Flash-Qwen2_5-2B_res448) to inference our model.
 
 ## Evaluation
 
-
 See [evaluation codes](lmms-eval_videochat). And [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) have supported our model, you also could use it to evaluate our model on varous benchmarks.
 
 ## Training
 
-
 See [training codes based LLaVA](llava-train_videochat) for VideoChat-Flash and [training codes based XTuner](xtuner-train_internvideo2_5) for finetuning InternVideo2.5.
 
-
-
 ## :bar_chart: [NIAH](./BENCHMARK.md)
-
 
 ![alt text](img/mhniah.png)
 
@@ -77,6 +64,7 @@ See [xtuner-eval_niah](xtuner-eval_niah) for evaluation of Single-Hop NIAH-Video
 # :page_facing_up: Citation
 
 If you find this project useful in your research, please consider cite:
+
 ```BibTeX
 @article{li2024videochat,
   title={VideoChat-Flash: Hierarchical Compression for Long-Context Video Modeling},

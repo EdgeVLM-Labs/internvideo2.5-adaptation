@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-HuggingFace Model Upload Utility
+"""HuggingFace Model Upload Utility.
 
 Uploads finetuned Mobile-VideoGPT models to HuggingFace Hub.
 
@@ -10,24 +9,23 @@ Usage:
     python utils/hf_upload.py --model_path results/qved_finetune_mobilevideogpt_0.5B --private
 """
 
+import argparse
+import json
 import os
 import sys
-import argparse
 from datetime import datetime
 from pathlib import Path
 
-from huggingface_hub import HfApi, create_repo, upload_folder, login
-import json
-
+from huggingface_hub import HfApi, create_repo, login, upload_folder
 
 # Default organization name
-DEFAULT_ORG = "EdgeVLM-Labs"
+DEFAULT_ORG = 'EdgeVLM-Labs'
 
 
 def get_default_repo_name() -> str:
     """Generate a default repository name with timestamp."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"qved-finetune-{timestamp}"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return f'qved-finetune-{timestamp}'
 
 
 def check_hf_login() -> bool:
@@ -41,49 +39,51 @@ def check_hf_login() -> bool:
         return False
 
 
-def create_model_card(model_path: Path, repo_id: str, has_adapter: bool) -> str:
-    """Create a comprehensive model card with hyperparameters and dataset info."""
-    
+def create_model_card(model_path: Path, repo_id: str,
+                      has_adapter: bool) -> str:
+    """Create a comprehensive model card with hyperparameters and dataset
+    info."""
+
     # Try to load hyperparameters from saved config
     hyperparams = {}
-    config_file = model_path / "hyperparameters.json"
+    config_file = model_path / 'hyperparameters.json'
     if not config_file.exists():
         # Check parent directory
-        config_file = model_path.parent / "hyperparameters.json"
-    
+        config_file = model_path.parent / 'hyperparameters.json'
+
     if config_file.exists():
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 hyperparams = json.load(f)
         except Exception:
             pass
-    
+
     # Try to load dataset info
     dataset_info = {}
     try:
         import sys
         sys.path.insert(0, str(Path.cwd()))
-        train_file = Path("dataset/qved_train.json")
-        val_file = Path("dataset/qved_val.json")
-        test_file = Path("dataset/qved_test.json")
-        
+        train_file = Path('dataset/qved_train.json')
+        val_file = Path('dataset/qved_val.json')
+        test_file = Path('dataset/qved_test.json')
+
         if train_file.exists() and val_file.exists() and test_file.exists():
-            with open(train_file, 'r') as f:
+            with open(train_file) as f:
                 train_data = json.load(f)
-            with open(val_file, 'r') as f:
+            with open(val_file) as f:
                 val_data = json.load(f)
-            with open(test_file, 'r') as f:
+            with open(test_file) as f:
                 test_data = json.load(f)
-            
+
             dataset_info = {
-                "train": len(train_data),
-                "val": len(val_data),
-                "test": len(test_data),
-                "total": len(train_data) + len(val_data) + len(test_data)
+                'train': len(train_data),
+                'val': len(val_data),
+                'test': len(test_data),
+                'total': len(train_data) + len(val_data) + len(test_data)
             }
     except Exception:
         pass
-    
+
     # Build model card
     model_card = f"""---
 tags:
@@ -113,7 +113,7 @@ This model is a finetuned version of [Amshaker/Mobile-VideoGPT-0.5B](https://hug
 ### Hyperparameters
 
 """
-    
+
     if hyperparams:
         model_card += f"""- **Epochs:** {hyperparams.get('epochs', 'N/A')}
 - **Learning Rate:** {hyperparams.get('learning_rate', 'N/A')}
@@ -132,8 +132,8 @@ This model is a finetuned version of [Amshaker/Mobile-VideoGPT-0.5B](https://hug
 
 """
     else:
-        model_card += "See training script for details.\n\n"
-    
+        model_card += 'See training script for details.\n\n'
+
     model_card += """### Training Infrastructure
 
 - **Framework:** DeepSpeed with ZeRO-2
@@ -141,7 +141,7 @@ This model is a finetuned version of [Amshaker/Mobile-VideoGPT-0.5B](https://hug
 - **Optimization:** LoRA (Low-Rank Adaptation)
 
 """
-    
+
     if dataset_info:
         model_card += f"""### Dataset Splits
 
@@ -151,7 +151,7 @@ This model is a finetuned version of [Amshaker/Mobile-VideoGPT-0.5B](https://hug
 - **Total:** {dataset_info['total']} samples
 
 """
-    
+
     model_card += f"""### Training Configuration
 
 - **Vision Tower:** OpenGVLab/VideoMamba
@@ -265,7 +265,7 @@ EdgeVLM Labs
 
 For questions or feedback, please open an issue in the model repository.
 """
-    
+
     return model_card
 
 
@@ -276,8 +276,7 @@ def upload_model_to_hf(
     private: bool = False,
     commit_message: str = None,
 ) -> str:
-    """
-    Upload a finetuned model to HuggingFace Hub.
+    """Upload a finetuned model to HuggingFace Hub.
 
     Args:
         model_path: Path to the model directory (can be checkpoint or base finetuning dir)
@@ -292,55 +291,56 @@ def upload_model_to_hf(
     model_path = Path(model_path)
 
     if not model_path.exists():
-        raise FileNotFoundError(f"Model path not found: {model_path}")
+        raise FileNotFoundError(f'Model path not found: {model_path}')
 
     # Check for adapter files or model files
-    has_adapter = (model_path / "adapter_config.json").exists()
-    has_model = (model_path / "config.json").exists() or (model_path / "pytorch_model.bin").exists()
+    has_adapter = (model_path / 'adapter_config.json').exists()
+    has_model = (model_path / 'config.json').exists() or (
+        model_path / 'pytorch_model.bin').exists()
 
     if not has_adapter and not has_model:
         # Maybe it's a checkpoint directory
-        checkpoints = list(model_path.glob("checkpoint-*"))
+        checkpoints = list(model_path.glob('checkpoint-*'))
         if checkpoints:
             # Use the latest checkpoint
-            latest_checkpoint = sorted(checkpoints, key=lambda x: int(x.name.split("-")[1]))[-1]
-            print(f"Using latest checkpoint: {latest_checkpoint}")
+            latest_checkpoint = sorted(
+                checkpoints, key=lambda x: int(x.name.split('-')[1]))[-1]
+            print(f'Using latest checkpoint: {latest_checkpoint}')
             model_path = latest_checkpoint
-            has_adapter = (model_path / "adapter_config.json").exists()
-            has_model = (model_path / "config.json").exists()
+            has_adapter = (model_path / 'adapter_config.json').exists()
+            has_model = (model_path / 'config.json').exists()
 
     if not has_adapter and not has_model:
-        raise ValueError(
-            f"No model or adapter files found in {model_path}. "
-            "Expected adapter_config.json or config.json"
-        )
+        raise ValueError(f'No model or adapter files found in {model_path}. '
+                         'Expected adapter_config.json or config.json')
 
     # Generate repo name if not provided
     if repo_name is None:
         repo_name = get_default_repo_name()
 
     # Full repository ID
-    repo_id = f"{org_name}/{repo_name}"
+    repo_id = f'{org_name}/{repo_name}'
 
     print(f"\n{'='*60}")
-    print("HuggingFace Model Upload")
+    print('HuggingFace Model Upload')
     print(f"{'='*60}")
-    print(f"Model path: {model_path}")
-    print(f"Repository: {repo_id}")
-    print(f"Private: {private}")
+    print(f'Model path: {model_path}')
+    print(f'Repository: {repo_id}')
+    print(f'Private: {private}')
     print(f"Type: {'LoRA Adapter' if has_adapter else 'Full Model'}")
     print(f"{'='*60}\n")
 
     # Check login status
     if not check_hf_login():
-        print("⚠ Not logged into HuggingFace. Please login first:")
-        print("  huggingface-cli login")
-        print("  or set HF_TOKEN environment variable")
+        print('⚠ Not logged into HuggingFace. Please login first:')
+        print('  huggingface-cli login')
+        print('  or set HF_TOKEN environment variable')
 
         # Try to login with token from environment
-        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        hf_token = os.environ.get('HF_TOKEN') or os.environ.get(
+            'HUGGING_FACE_HUB_TOKEN')
         if hf_token:
-            print("\nFound HF_TOKEN in environment, attempting login...")
+            print('\nFound HF_TOKEN in environment, attempting login...')
             login(token=hf_token)
         else:
             sys.exit(1)
@@ -348,64 +348,68 @@ def upload_model_to_hf(
     api = HfApi()
 
     # Create repository
-    print(f"📦 Creating repository: {repo_id}")
+    print(f'📦 Creating repository: {repo_id}')
     try:
         create_repo(
             repo_id=repo_id,
-            repo_type="model",
+            repo_type='model',
             private=private,
             exist_ok=True,
         )
-        print(f"✓ Repository created/verified: {repo_id}")
+        print(f'✓ Repository created/verified: {repo_id}')
     except Exception as e:
-        print(f"⚠ Warning: Could not create repository: {e}")
-        print("  Will try to upload anyway...")
+        print(f'⚠ Warning: Could not create repository: {e}')
+        print('  Will try to upload anyway...')
 
     # Generate and save model card
-    print(f"\n📝 Generating model card...")
+    print(f'\n📝 Generating model card...')
     model_card_content = create_model_card(model_path, repo_id, has_adapter)
-    readme_path = model_path / "README.md"
+    readme_path = model_path / 'README.md'
     with open(readme_path, 'w', encoding='utf-8') as f:
         f.write(model_card_content)
-    print(f"✓ Model card saved to {readme_path}")
-    
+    print(f'✓ Model card saved to {readme_path}')
+
     # Prepare commit message
     if commit_message is None:
         if has_adapter:
-            commit_message = f"Upload LoRA adapters from {model_path.name}"
+            commit_message = f'Upload LoRA adapters from {model_path.name}'
         else:
-            commit_message = f"Upload finetuned model from {model_path.name}"
+            commit_message = f'Upload finetuned model from {model_path.name}'
 
     # Upload model
-    print(f"\n🚀 Uploading model to {repo_id}...")
-    print("  This may take a few minutes depending on model size...")
+    print(f'\n🚀 Uploading model to {repo_id}...')
+    print('  This may take a few minutes depending on model size...')
 
     try:
         upload_folder(
             folder_path=str(model_path),
             repo_id=repo_id,
-            repo_type="model",
+            repo_type='model',
             commit_message=commit_message,
-            ignore_patterns=["*.py", "__pycache__", "*.pyc", "runs/*", "wandb/*"],
+            ignore_patterns=[
+                '*.py', '__pycache__', '*.pyc', 'runs/*', 'wandb/*'
+            ],
         )
     except Exception as e:
-        print(f"❌ Upload failed: {e}")
+        print(f'❌ Upload failed: {e}')
         raise
 
     # Get repository URL
-    repo_url = f"https://huggingface.co/{repo_id}"
+    repo_url = f'https://huggingface.co/{repo_id}'
 
     print(f"\n{'='*60}")
-    print("✅ Upload Complete!")
+    print('✅ Upload Complete!')
     print(f"{'='*60}")
-    print(f"Repository URL: {repo_url}")
-    print(f"\nTo use this model:")
-    print(f"  from transformers import AutoModelForCausalLM")
+    print(f'Repository URL: {repo_url}')
+    print(f'\nTo use this model:')
+    print(f'  from transformers import AutoModelForCausalLM')
     print(f"  model = AutoModelForCausalLM.from_pretrained('{repo_id}')")
     if has_adapter:
-        print(f"\n  # For LoRA adapters:")
-        print(f"  from peft import PeftModel")
-        print(f"  base_model = AutoModelForCausalLM.from_pretrained('Amshaker/Mobile-VideoGPT-0.5B')")
+        print(f'\n  # For LoRA adapters:')
+        print(f'  from peft import PeftModel')
+        print(
+            f"  base_model = AutoModelForCausalLM.from_pretrained('Amshaker/Mobile-VideoGPT-0.5B')"
+        )
         print(f"  model = PeftModel.from_pretrained(base_model, '{repo_id}')")
     print(f"{'='*60}")
 
@@ -414,36 +418,37 @@ def upload_model_to_hf(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Upload finetuned Mobile-VideoGPT model to HuggingFace Hub"
+        description='Upload finetuned Mobile-VideoGPT model to HuggingFace Hub'
     )
     parser.add_argument(
-        "--model_path",
+        '--model_path',
         type=str,
         required=True,
-        help="Path to the finetuned model directory",
+        help='Path to the finetuned model directory',
     )
     parser.add_argument(
-        "--repo_name",
+        '--repo_name',
         type=str,
         default=None,
-        help=f"Name for the HuggingFace repository (default: qved-finetune-TIMESTAMP)",
+        help=
+        f'Name for the HuggingFace repository (default: qved-finetune-TIMESTAMP)',
     )
     parser.add_argument(
-        "--org",
+        '--org',
         type=str,
         default=DEFAULT_ORG,
-        help=f"HuggingFace organization name (default: {DEFAULT_ORG})",
+        help=f'HuggingFace organization name (default: {DEFAULT_ORG})',
     )
     parser.add_argument(
-        "--private",
-        action="store_true",
-        help="Create a private repository",
+        '--private',
+        action='store_true',
+        help='Create a private repository',
     )
     parser.add_argument(
-        "--commit_message",
+        '--commit_message',
         type=str,
         default=None,
-        help="Custom commit message for the upload",
+        help='Custom commit message for the upload',
     )
 
     args = parser.parse_args()
@@ -456,11 +461,11 @@ def main():
             private=args.private,
             commit_message=args.commit_message,
         )
-        print(f"\n🎉 Success! Model available at: {repo_url}")
+        print(f'\n🎉 Success! Model available at: {repo_url}')
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f'\n❌ Error: {e}')
         sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

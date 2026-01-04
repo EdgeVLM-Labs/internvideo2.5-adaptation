@@ -7,8 +7,12 @@ from .stop_criteria import StopWordStoppingCriteria
 from .templates import PROMPT_TEMPLATE, SYSTEM_TEMPLATE
 
 __all__ = [
-    'IGNORE_INDEX', 'DEFAULT_PAD_TOKEN_INDEX', 'PROMPT_TEMPLATE',
-    'DEFAULT_IMAGE_TOKEN', 'SYSTEM_TEMPLATE', 'StopWordStoppingCriteria',
+    'IGNORE_INDEX',
+    'DEFAULT_PAD_TOKEN_INDEX',
+    'PROMPT_TEMPLATE',
+    'DEFAULT_IMAGE_TOKEN',
+    'SYSTEM_TEMPLATE',
+    'StopWordStoppingCriteria',
     'IMAGE_TOKEN_INDEX',
     # 'load_state_dict_into_model', 'get_origin_state_dict',
     # 'SUPPORT_MODELS'

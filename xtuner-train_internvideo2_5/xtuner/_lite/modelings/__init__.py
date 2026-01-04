@@ -1,31 +1,29 @@
 import os
+
 import torch.nn as nn
 
 from .internlm2 import InternLM2Config, InternLM2ForCausalLM
 
 try:
     from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
+    from liger_kernel.transformers.fused_linear_cross_entropy import \
+        LigerFusedLinearCrossEntropyLoss
     from liger_kernel.transformers.geglu import LigerGEGLUMLP
     from liger_kernel.transformers.layer_norm import LigerLayerNorm
     from liger_kernel.transformers.rms_norm import LigerRMSNorm
     from liger_kernel.transformers.rope import liger_rotary_pos_emb
-    from liger_kernel.transformers.swiglu import (
-        LigerSwiGLUMLP, LigerSiLUMulFunction
-    )
-    from liger_kernel.transformers.fused_linear_cross_entropy import (
-        LigerFusedLinearCrossEntropyLoss,
-    )
-    from transformers.models.qwen2_vl.modeling_qwen2_vl import (
+    from liger_kernel.transformers.swiglu import (LigerSiLUMulFunction,
+                                                  LigerSwiGLUMLP)
+    from transformers.models.qwen2_vl.modeling_qwen2_vl import \
         Qwen2VLCausalLMOutputWithPast
-    )
 except ImportError:
     pass
 
 from typing import List, Optional, Tuple, Union
 
 import torch
-from torch.nn import CrossEntropyLoss
 from mmengine.utils.version_utils import digit_version
+from torch.nn import CrossEntropyLoss
 
 
 def register_remote_code():
@@ -97,17 +95,13 @@ def lce_forward(
 
     output_attentions = (
         output_attentions
-        if output_attentions is not None
-        else self.config.output_attentions
-    )
+        if output_attentions is not None else self.config.output_attentions)
     output_hidden_states = (
-        output_hidden_states
-        if output_hidden_states is not None
-        else self.config.output_hidden_states
-    )
+        output_hidden_states if output_hidden_states is not None else
+        self.config.output_hidden_states)
     return_dict = (
-        return_dict if return_dict is not None else self.config.use_return_dict
-    )
+        return_dict
+        if return_dict is not None else self.config.use_return_dict)
 
     # 官方这部分代码有错误,只能替换
     if inputs_embeds is None:
@@ -115,16 +109,24 @@ def lce_forward(
         if pixel_values is not None:
             pixel_values = pixel_values.type(self.visual.get_dtype())
             image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
-            image_mask = (input_ids == self.config.image_token_id).unsqueeze(-1).expand_as(inputs_embeds)
-            image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)  # ....
+            image_mask = (input_ids == self.config.image_token_id
+                          ).unsqueeze(-1).expand_as(inputs_embeds)
+            image_embeds = image_embeds.to(inputs_embeds.device,
+                                           inputs_embeds.dtype)
+            inputs_embeds = inputs_embeds.masked_scatter(
+                image_mask, image_embeds)  # ....
 
         if pixel_values_videos is not None:
-            pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
-            video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
-            video_mask = (input_ids == self.config.video_token_id).unsqueeze(-1).expand_as(inputs_embeds)
-            video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-            inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+            pixel_values_videos = pixel_values_videos.type(
+                self.visual.get_dtype())
+            video_embeds = self.visual(
+                pixel_values_videos, grid_thw=video_grid_thw)
+            video_mask = (input_ids == self.config.video_token_id
+                          ).unsqueeze(-1).expand_as(inputs_embeds)
+            video_embeds = video_embeds.to(inputs_embeds.device,
+                                           inputs_embeds.dtype)
+            inputs_embeds = inputs_embeds.masked_scatter(
+                video_mask, video_embeds)
 
         if attention_mask is not None:
             attention_mask = attention_mask.to(inputs_embeds.device)
@@ -151,7 +153,8 @@ def lce_forward(
         shift_labels = labels[..., 1:].contiguous()
 
         # Flatten tokens
-        shift_hidden_states = shift_hidden_states.view(-1, self.config.hidden_size)
+        shift_hidden_states = shift_hidden_states.view(-1,
+                                                       self.config.hidden_size)
         shift_labels = shift_labels.view(-1)
 
         lce = LigerFusedLinearCrossEntropyLoss()
@@ -172,8 +175,8 @@ def lce_forward(
             loss = loss_fct(shift_logits, shift_labels)
 
     if not return_dict:
-        output = (logits,) + outputs[1:]
-        return (loss,) + output if loss is not None else output
+        output = (logits, ) + outputs[1:]
+        return (loss, ) + output if loss is not None else output
 
     return Qwen2VLCausalLMOutputWithPast(
         loss=loss,
@@ -185,13 +188,11 @@ def lce_forward(
     )
 
 
-def apply_liger_kernel_to_qwen2_vl(
-    cross_entropy: bool = False,
-    fused_linear_cross_entropy: bool = True,
-    rms_norm: bool = True,
-    layer_norm: bool = True,
-    swiglu: bool = True
-) -> None:
+def apply_liger_kernel_to_qwen2_vl(cross_entropy: bool = False,
+                                   fused_linear_cross_entropy: bool = True,
+                                   rms_norm: bool = True,
+                                   layer_norm: bool = True,
+                                   swiglu: bool = True) -> None:
     """
     Apply Liger kernels to replace original implementation in HuggingFace Qwen2-VL models.
     NOTE: Qwen2-VL is not available in transformers<=4.44.2
@@ -210,7 +211,7 @@ def apply_liger_kernel_to_qwen2_vl(
     """
     assert not (
         cross_entropy and fused_linear_cross_entropy
-    ), "cross_entropy and fused_linear_cross_entropy cannot both be True."
+    ), 'cross_entropy and fused_linear_cross_entropy cannot both be True.'
 
     from transformers.models.qwen2_vl import modeling_qwen2_vl
 
@@ -230,21 +231,24 @@ def apply_liger_kernel_to_qwen2_vl(
 
 
 class LigerSwiGLUMLPForInternlm2(nn.Module):
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.w1 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.w3 = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.w2 = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        if config.hidden_act not in ["silu", "swish"]:
-            raise ValueError(f"Activation function {config.hidden_act} not supported.")
+        self.w1 = nn.Linear(
+            self.hidden_size, self.intermediate_size, bias=False)
+        self.w3 = nn.Linear(
+            self.hidden_size, self.intermediate_size, bias=False)
+        self.w2 = nn.Linear(
+            self.intermediate_size, self.hidden_size, bias=False)
+        if config.hidden_act not in ['silu', 'swish']:
+            raise ValueError(
+                f'Activation function {config.hidden_act} not supported.')
 
     def forward(self, x):
-        return self.w2(
-            LigerSiLUMulFunction.apply(self.w1(x), self.w3(x))
-        )
+        return self.w2(LigerSiLUMulFunction.apply(self.w1(x), self.w3(x)))
 
 
 def apply_liger_kernel_to_llava_clip_internlm2(
@@ -252,8 +256,7 @@ def apply_liger_kernel_to_llava_clip_internlm2(
         fused_linear_cross_entropy: bool = True,
         rms_norm: bool = True,
         layer_norm: bool = True,
-        swiglu: bool = True
-) -> None:
+        swiglu: bool = True) -> None:
     # modeling_clip
     nn.LayerNorm = LigerLayerNorm
 
@@ -264,4 +267,4 @@ def apply_liger_kernel_to_llava_clip_internlm2(
 
     from ..accelerate.dispatches import internlm2
     internlm2.apply_rotary_pos_emb = liger_rotary_pos_emb
-    os.environ["USE_LIGER_KERNEL"] = "1"
+    os.environ['USE_LIGER_KERNEL'] = '1'

@@ -1,8 +1,9 @@
-"""
-Conversation prompt templates.
+"""Conversation prompt templates.
 
-We kindly request that you import fastchat instead of copying this file if you wish to use it.
-If you have changes in mind, please contribute back so the community can benefit collectively and continue to maintain these valuable templates.
+We kindly request that you import fastchat instead of copying this file if you
+wish to use it. If you have changes in mind, please contribute back so the
+community can benefit collectively and continue to maintain these valuable
+templates.
 """
 
 import dataclasses
@@ -35,7 +36,8 @@ class SeparatorStyle(IntEnum):
 
 @dataclasses.dataclass
 class Conversation:
-    """A class that manages prompt templates and keeps all conversation history."""
+    """A class that manages prompt templates and keeps all conversation
+    history."""
 
     # The name of this template
     name: str
@@ -60,7 +62,8 @@ class Conversation:
 
     def get_prompt(self) -> str:
         """Get the prompt for generation."""
-        system_prompt = self.system_template.format(system_message=self.system_message)
+        system_prompt = self.system_template.format(
+            system_message=self.system_message)
         if self.sep_style == SeparatorStyle.ADD_COLON_SINGLE:
             ret = system_prompt + self.sep
             for role, message in self.messages:
@@ -116,10 +119,8 @@ class Conversation:
             for i, (role, message) in enumerate(self.messages):
                 if message:
                     ret += (
-                        role
-                        + ': '
-                        + message.replace('\r\n', '\n').replace('\n\n', '\n')
-                    )
+                        role + ': ' +
+                        message.replace('\r\n', '\n').replace('\n\n', '\n'))
                     ret += '\n\n'
                 else:
                     ret += role + ':'
@@ -259,15 +260,16 @@ class Conversation:
     def update_last_message(self, message: str):
         """Update the last output.
 
-        The last message is typically set to be None when constructing the prompt,
-        so we need to update it in-place after getting the response from a model.
+        The last message is typically set to be None when constructing the
+        prompt, so we need to update it in-place after getting the response
+        from a model.
         """
         self.messages[-1][1] = message
 
     def to_gradio_chatbot(self):
         """Convert the conversation to gradio chatbot format."""
         ret = []
-        for i, (role, msg) in enumerate(self.messages[self.offset :]):
+        for i, (role, msg) in enumerate(self.messages[self.offset:]):
             if i % 2 == 0:
                 ret.append([msg, None])
             else:
@@ -278,7 +280,7 @@ class Conversation:
         """Convert the conversation to OpenAI chat completion format."""
         ret = [{'role': 'system', 'content': self.system_message}]
 
-        for i, (_, msg) in enumerate(self.messages[self.offset :]):
+        for i, (_, msg) in enumerate(self.messages[self.offset:]):
             if i % 2 == 0:
                 ret.append({'role': 'user', 'content': msg})
             else:
@@ -318,9 +320,8 @@ conv_templates: Dict[str, Conversation] = {}
 def register_conv_template(template: Conversation, override: bool = False):
     """Register a new conversation template."""
     if not override:
-        assert (
-            template.name not in conv_templates
-        ), f'{template.name} has been registered.'
+        assert (template.name
+                not in conv_templates), f'{template.name} has been registered.'
 
     conv_templates[template.name] = template
 
@@ -339,9 +340,7 @@ register_conv_template(
         sep_style=SeparatorStyle.INTERNVL_ZH,
         sep='</s>',
         sep2=' ',
-    )
-)
-
+    ))
 
 # Both Hermes-2 and internlm2-chat are chatml-format conversation templates. The difference
 # is that during training, the preprocessing function for the Hermes-2 template doesn't add
@@ -353,7 +352,8 @@ register_conv_template(
         system_template='<|im_start|>system\n{system_message}',
         # note: The new system prompt was not used here to avoid changes in benchmark performance.
         # system_message='我是书生·万象，英文名是InternVL，是由上海人工智能实验室及多家合作单位联合开发的多模态大语言模型。',
-        system_message='你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
+        system_message=
+        '你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
         roles=('<|im_start|>user\n', '<|im_start|>assistant\n'),
         sep_style=SeparatorStyle.MPT,
         sep='<|im_end|>',
@@ -364,9 +364,7 @@ register_conv_template(
             8,
         ],
         stop_str='<|endoftext|>',
-    )
-)
-
+    ))
 
 register_conv_template(
     Conversation(
@@ -374,17 +372,12 @@ register_conv_template(
         system_template='<|im_start|>system\n{system_message}',
         # note: The new system prompt was not used here to avoid changes in benchmark performance.
         # system_message='我是书生·万象，英文名是InternVL，是由上海人工智能实验室及多家合作单位联合开发的多模态大语言模型。',
-        system_message='你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
+        system_message=
+        '你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
         roles=('<|im_start|>user\n', '<|im_start|>assistant\n'),
         sep_style=SeparatorStyle.MPT,
         sep='<|im_end|>',
-        stop_token_ids=[
-            2,
-            92543,
-            92542
-        ]
-    )
-)
+        stop_token_ids=[2, 92543, 92542]))
 
 register_conv_template(
     Conversation(
@@ -392,35 +385,23 @@ register_conv_template(
         system_template='<|im_start|>system\n{system_message}',
         # note: The new system prompt was not used here to avoid changes in benchmark performance.
         # system_message='我是书生·万象，英文名是InternVL，是由上海人工智能实验室及多家合作单位联合开发的多模态大语言模型。',
-        system_message="Your role as an assistant involves thoroughly exploring questions through a systematic long thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution. In the Thought section, detail your reasoning process using the specified format: <|begin_of_thought|> {thought with steps separated with '\n\n'} <|end_of_thought|> Each step should include detailed considerations such as analisying questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The solution should remain a logical, accurate, concise expression style and detail necessary step needed to reach the conclusion, formatted as follows: <|begin_of_solution|> {final formatted, precise, and clear solution} <|end_of_solution|> Now, try to solve the following question through the above guidelines:",
+        system_message=
+        "Your role as an assistant involves thoroughly exploring questions through a systematic long thinking process before providing the final precise and accurate solutions. This requires engaging in a comprehensive cycle of analysis, summarizing, exploration, reassessment, reflection, backtracing, and iteration to develop well-considered thinking process. Please structure your response into two main sections: Thought and Solution. In the Thought section, detail your reasoning process using the specified format: <|begin_of_thought|> {thought with steps separated with '\n\n'} <|end_of_thought|> Each step should include detailed considerations such as analisying questions, summarizing relevant findings, brainstorming new ideas, verifying the accuracy of the current steps, refining any errors, and revisiting previous steps. In the Solution section, based on various attempts, explorations, and reflections from the Thought section, systematically present the final solution that you deem correct. The solution should remain a logical, accurate, concise expression style and detail necessary step needed to reach the conclusion, formatted as follows: <|begin_of_solution|> {final formatted, precise, and clear solution} <|end_of_solution|> Now, try to solve the following question through the above guidelines:",
         roles=('<|im_start|>user\n', '<|im_start|>assistant\n'),
         sep_style=SeparatorStyle.MPT,
         sep='<|im_end|>',
-        stop_token_ids=[
-            2,
-            92543,
-            92542
-        ]
-    )
-)
-
-
+        stop_token_ids=[2, 92543, 92542]))
 
 register_conv_template(
     Conversation(
         name='internvl2_5',
         system_template='<|im_start|>system\n{system_message}',
-        system_message='你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。',
+        system_message=
+        '你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。',
         roles=('<|im_start|>user\n', '<|im_start|>assistant\n'),
         sep_style=SeparatorStyle.MPT,
         sep='<|im_end|>\n',
-        stop_token_ids=[
-            2,
-            92543,
-            92542
-        ]
-    )
-)
+        stop_token_ids=[2, 92543, 92542]))
 
 register_conv_template(
     Conversation(
@@ -428,14 +409,9 @@ register_conv_template(
         system_template='<|system|>\n{system_message}',
         # note: The new system prompt was not used here to avoid changes in benchmark performance.
         # system_message='我是书生·万象，英文名是InternVL，是由上海人工智能实验室及多家合作单位联合开发的多模态大语言模型。',
-        system_message='你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
+        system_message=
+        '你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。',
         roles=('<|user|>\n', '<|assistant|>\n'),
         sep_style=SeparatorStyle.MPT,
         sep='<|end|>',
-        stop_token_ids=[
-            2,
-            32000,
-            32007
-        ]
-    )
-)
+        stop_token_ids=[2, 32000, 32007]))

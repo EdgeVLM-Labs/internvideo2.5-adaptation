@@ -1,11 +1,11 @@
-import torch
-
 from typing import Any
+
+import torch
+import torch.distributed as dist
 from torch import Tensor
 
-import torch.distributed as dist
-from .utils import RING_IMPL_DICT, RING_IMPL_QKVPACKED_DICT
 from ..globals import PROCESS_GROUP
+from .utils import RING_IMPL_DICT, RING_IMPL_QKVPACKED_DICT
 
 
 class AsyncLongContextAttention(torch.nn.Module):
@@ -22,10 +22,10 @@ class AsyncLongContextAttention(torch.nn.Module):
         self,
         scatter_idx: int = 2,
         gather_idx: int = 1,
-        ring_impl_type: str = "basic",
+        ring_impl_type: str = 'basic',
     ) -> None:
 
-        super(AsyncLongContextAttention, self).__init__()
+        super().__init__()
         self.ring_pg = PROCESS_GROUP.RING_PG
         self.ulysses_pg = PROCESS_GROUP.ULYSSES_PG
 
@@ -34,7 +34,7 @@ class AsyncLongContextAttention(torch.nn.Module):
 
         assert (
             self.ulysses_pg is not None or self.ring_pg is not None
-        ), f"use set_seq_parallel_pg() first. Now ulysses pg {self.ulysses_pg} and ring pg {self.ring_pg}"
+        ), f'use set_seq_parallel_pg() first. Now ulysses pg {self.ulysses_pg} and ring pg {self.ring_pg}'
         self.scatter_idx = scatter_idx
         self.gather_idx = gather_idx
         self.ring_attn_fn = RING_IMPL_DICT[ring_impl_type]
@@ -53,7 +53,7 @@ class AsyncLongContextAttention(torch.nn.Module):
         return_attn_probs=False,
         *args: Any,
     ) -> Tensor:
-        """forward
+        """forward.
 
         Arguments:
             query (Tensor): query input to the layer (bs, seqlen/P, hc, hs)
@@ -75,15 +75,13 @@ class AsyncLongContextAttention(torch.nn.Module):
         un = hc // ulysses_degree
         un_kv = hc_kv // ulysses_degree
 
-        assert un_kv == un, f"un_kv {un_kv} un {un}"
+        assert un_kv == un, f'un_kv {un_kv} un {un}'
 
         qkv = torch.cat([query, key, value]).contiguous()
         # (3*bs, seqlen/P, hc, hs) -> (hc, seqlen/P, 3*bs, hs) -> (un, ud, seqlen/P, 3*bs, hs), where hc = un*ud
         qkv_list = torch.unbind(
-            qkv.transpose(0, 2)
-            .contiguous()
-            .reshape(un, ulysses_degree, shard_seqlen, 3 * bs, hs)
-        )
+            qkv.transpose(0, 2).contiguous().reshape(un, ulysses_degree,
+                                                     shard_seqlen, 3 * bs, hs))
         # 3xall-to-all output buffer
         qkv_trans_list = [
             torch.zeros(
@@ -94,8 +92,7 @@ class AsyncLongContextAttention(torch.nn.Module):
                 hs,
                 dtype=query.dtype,
                 device=query.device,
-            )
-            for i in range(len(qkv_list))
+            ) for i in range(len(qkv_list))
         ]
         # last all-to-all buffter
         context_layer_list = [
@@ -107,8 +104,7 @@ class AsyncLongContextAttention(torch.nn.Module):
                 hs,
                 dtype=query.dtype,
                 device=query.device,
-            )
-            for i in range(len(qkv_list))
+            ) for i in range(len(qkv_list))
         ]
 
         comm_handle_list = []
@@ -129,11 +125,9 @@ class AsyncLongContextAttention(torch.nn.Module):
             if comm_handle_list[i] is not None:
                 comm_handle_list[i].wait()
             qkv_trans = (
-                qkv_trans.reshape(seq_len, 3 * bs, 1, hs)
-                .transpose(0, 1)
-                .contiguous()
-                .reshape(3 * bs, seq_len, 1, hs)
-            )
+                qkv_trans.reshape(seq_len, 3 * bs, 1,
+                                  hs).transpose(0, 1).contiguous().reshape(
+                                      3 * bs, seq_len, 1, hs))
 
             # qkv_trans = all_to_all_4D_async(qkv, qkv_trans_list[i], self.scatter_idx, self.gather_idx, self.ulysses_pg)
             qkv_trans = torch.chunk(qkv_trans, 3, dim=0)
@@ -161,12 +155,10 @@ class AsyncLongContextAttention(torch.nn.Module):
             # scatter 1, gather 2
 
             context_layer = (
-                context_layer.reshape(bs, ulysses_degree, shard_seqlen, 1, hs)
-                .transpose(0, 3)
-                .transpose(0, 1)
-                .contiguous()
-                .reshape(ulysses_degree, 1, shard_seqlen, bs, hs)
-            )
+                context_layer.reshape(
+                    bs, ulysses_degree, shard_seqlen, 1,
+                    hs).transpose(0, 3).transpose(0, 1).contiguous().reshape(
+                        ulysses_degree, 1, shard_seqlen, bs, hs))
             with torch.cuda.stream(self.stream):
                 ret = dist.all_to_all_single(
                     context_layer_list[i],
@@ -182,17 +174,16 @@ class AsyncLongContextAttention(torch.nn.Module):
             if ret is not None:
                 ret.wait()
             context_layer_list[i] = (
-                context_layer_list[i]
-                .reshape(ulysses_degree, shard_seqlen, bs, hs)
-                .transpose(0, 2)
-                .contiguous()
-                .reshape(bs, shard_seqlen, ulysses_degree, hs)
-            )
+                context_layer_list[i].reshape(ulysses_degree,
+                                              shard_seqlen, bs, hs).transpose(
+                                                  0, 2).contiguous().reshape(
+                                                      bs, shard_seqlen,
+                                                      ulysses_degree, hs))
 
         output = torch.cat(context_layer_list, dim=2)
         return output
 
     def backward(self, *args, **kwargs):
         raise RuntimeError(
-            "Backward computation is not allowed for AsyncLongContextAttention."
+            'Backward computation is not allowed for AsyncLongContextAttention.'
         )

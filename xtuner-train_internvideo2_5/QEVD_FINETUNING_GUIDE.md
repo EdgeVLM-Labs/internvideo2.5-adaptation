@@ -253,6 +253,7 @@ tail -f work_dirs/qevd_fit_300k_internvideo2_5_r16/*.log
    - Set `--selective-recompute 1.0` in training script
 
 5. **Use mixed precision:**
+
    - Already using bf16 if available
 
 ## Output Structure
@@ -306,6 +307,7 @@ python utils/base_model_inference.py \
    - Consider using ZeRO-3 instead of ZeRO-2 (edit `--deepspeed scripts/zero3.json`)
 
 4. **Slow training**
+
    - Reduce `MAX_FRAMES` for faster processing
    - Increase `MICRO_BATCH_SIZE` if you have memory
    - Use data augmentation = false

@@ -1,8 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import types
 
-from xtuner._lite import get_logger
 import torch.distributed as dist
+
+from xtuner._lite import get_logger
+
 logger = get_logger()
 
 
@@ -64,6 +66,7 @@ def dispatch_qwen2_varlen_attn_forward(module):
     _dispatch_forward_fn(module, qwen2_varlen_attn_forward)
     return qwen2_varlen_attn_forward.__name__
 
+
 def dispatch_internvl2_hico_forward(module):
     assert module.__class__.__name__ == 'InternVLChatModel_hico'
     from .internvl2 import internvl2_hico_forward
@@ -75,7 +78,8 @@ DISPATCH_MAP = {
     'InternLM2FlashAttention2': dispatch_internlm_varlen_attn_forward,
     'CLIPAttention': dispatch_clip_attn_forward,
     'InternLM2RMSNorm': dispatch_rms_norm_forward,
-    'Phi3FlashAttention2': dispatch_phi3_varlen_attn_forward,  # 如果不开启 batch packing，需要注释否则会报错
+    'Phi3FlashAttention2':
+    dispatch_phi3_varlen_attn_forward,  # 如果不开启 batch packing，需要注释否则会报错
     'Phi3RMSNorm': dispatch_rms_norm_forward,
     'LlamaRMSNorm': dispatch_rms_norm_forward,
     'LlamaFlashAttention2': dispatch_llama3_varlen_attn_forward,
@@ -93,8 +97,7 @@ def dispatch_modules(model, exclude_cls=[]):
     for name, module in model.named_modules():
         module_cls = module.__class__.__name__
         if module_cls in exclude_cls:
-            logger.info(
-                    f'Jump {name}({module_cls})')
+            logger.info(f'Jump {name}({module_cls})')
             continue
         if module_cls in DISPATCH_MAP:
             dispatched = DISPATCH_MAP[module_cls](module)

@@ -1,15 +1,16 @@
-from typing import List, Optional, Tuple, Union
-
-import torch.utils.checkpoint
-from torch.nn import CrossEntropyLoss
-from transformers.modeling_outputs import CausalLMOutputWithPast
-import torch.distributed as dist
-from torch.distributed.nn.functional import all_gather
-from mmengine.logging import MessageHub
 import copy
-from xtuner._lite.parallel.new_setup import get_sp_group
 import math
 import os
+from typing import List, Optional, Tuple, Union
+
+import torch.distributed as dist
+import torch.utils.checkpoint
+from mmengine.logging import MessageHub
+from torch.distributed.nn.functional import all_gather
+from torch.nn import CrossEntropyLoss
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from xtuner._lite.parallel.new_setup import get_sp_group
 from xtuner._lite.parallel.sequence import split_for_sequence_parallel
 
 
@@ -38,19 +39,19 @@ def rescale_sp_loss(loss_per_sp_rank,
 
 
 def internvl2_forward(
-            self,
-            pixel_values: torch.FloatTensor,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            image_flags: Optional[torch.LongTensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = None,
-            output_attentions: Optional[bool] = None,
-            output_hidden_states: Optional[bool] = None,
-            return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    self,
+    pixel_values: torch.FloatTensor,
+    input_ids: torch.LongTensor = None,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    image_flags: Optional[torch.LongTensor] = None,
+    past_key_values: Optional[List[torch.FloatTensor]] = None,
+    labels: Optional[torch.LongTensor] = None,
+    use_cache: Optional[bool] = None,
+    output_attentions: Optional[bool] = None,
+    output_hidden_states: Optional[bool] = None,
+    return_dict: Optional[bool] = None,
+) -> Union[Tuple, CausalLMOutputWithPast]:
     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
     sp_size = dist.get_world_size(get_sp_group())
@@ -64,17 +65,22 @@ def internvl2_forward(
             pad_id = 0
             orig_len_input_ids = input_ids.shape[1]
             image_flags = image_flags.squeeze(-1)
-            assert input_ids.shape[0] == 1, 'batch size must be 1 for sequence parallel'
+            assert input_ids.shape[
+                0] == 1, 'batch size must be 1 for sequence parallel'
             # input_ids 均匀切分
             if orig_len_input_ids % sp_size != 0:  # 确保能均匀切
-                max_inputs_len = math.ceil(orig_len_input_ids / sp_size) * sp_size
-                _temp = input_ids.new_full((1, max_inputs_len - orig_len_input_ids), pad_id)
+                max_inputs_len = math.ceil(
+                    orig_len_input_ids / sp_size) * sp_size
+                _temp = input_ids.new_full(
+                    (1, max_inputs_len - orig_len_input_ids), pad_id)
                 input_ids_new = torch.cat([input_ids, _temp], dim=-1)
             else:
                 input_ids_new = input_ids
-            input_ids_list = torch.split(input_ids_new, input_ids_new.shape[1] // sp_size, dim=-1)
+            input_ids_list = torch.split(
+                input_ids_new, input_ids_new.shape[1] // sp_size, dim=-1)
             input_ids_rank_pre = input_ids_list[sp_rank].contiguous()
-            input_embeds_rank_pre = self.language_model.get_input_embeddings()(input_ids_rank_pre).clone()
+            input_embeds_rank_pre = self.language_model.get_input_embeddings()(
+                input_ids_rank_pre).clone()
 
             # torch.cuda.synchronize()
             # start_time = time.perf_counter()
@@ -85,7 +91,8 @@ def internvl2_forward(
             input_embeds = torch.cat(input_embeds, dim=1)
             input_embeds = input_embeds[:, :orig_len_input_ids]
         else:
-            input_embeds = self.language_model.get_input_embeddings()(input_ids).clone()
+            input_embeds = self.language_model.get_input_embeddings()(
+                input_ids).clone()
 
         no_split_pixel_values = os.environ.get('NO_SPLIT_PIXEL_VALUES')
         split_pixel_values = not no_split_pixel_values
@@ -96,11 +103,13 @@ def internvl2_forward(
             if orig_img_batch % sp_size != 0:  # 确保能均匀切
                 max_inputs_len = math.ceil(orig_img_batch / sp_size) * sp_size
                 pad_img_batch = max_inputs_len - orig_img_batch
-                pad_pixel_values_ = pixel_values.new_zeros(pad_img_batch, 3,
-                                                           pixel_values.shape[2],
-                                                           pixel_values.shape[3])
-                pixel_values = torch.cat([pixel_values, pad_pixel_values_], dim=0)
-            pixel_values = torch.split(pixel_values, len(pixel_values) // sp_size, dim=0)
+                pad_pixel_values_ = pixel_values.new_zeros(
+                    pad_img_batch, 3, pixel_values.shape[2],
+                    pixel_values.shape[3])
+                pixel_values = torch.cat([pixel_values, pad_pixel_values_],
+                                         dim=0)
+            pixel_values = torch.split(
+                pixel_values, len(pixel_values) // sp_size, dim=0)
             pixel_values = pixel_values[sp_rank].contiguous()
 
             vit_embeds = self.extract_feature(pixel_values)
@@ -118,7 +127,8 @@ def internvl2_forward(
         vit_embeds = vit_embeds[image_flags == 1]
     else:
         image_flags = image_flags.squeeze(-1)
-        input_embeds = self.language_model.get_input_embeddings()(input_ids).clone()
+        input_embeds = self.language_model.get_input_embeddings()(
+            input_ids).clone()
 
         vit_embeds = self.extract_feature(pixel_values)
         vit_embeds = vit_embeds[image_flags == 1]
@@ -135,13 +145,17 @@ def internvl2_forward(
     input_ids = input_ids.reshape(B * N)
     selected = (input_ids == self.img_context_token_id)
     try:
-        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)
+        input_embeds[
+            selected] = input_embeds[selected] * 0.0 + vit_embeds.reshape(
+                -1, C)
     except Exception as e:
         vit_embeds = vit_embeds.reshape(-1, C)
-        print(f'warning: {e}, input_embeds[selected].shape={input_embeds[selected].shape}, '
-              f'vit_embeds.shape={vit_embeds.shape}')
+        print(
+            f'warning: {e}, input_embeds[selected].shape={input_embeds[selected].shape}, '
+            f'vit_embeds.shape={vit_embeds.shape}')
         n_token = selected.sum()
-        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
+        input_embeds[
+            selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
 
     input_embeds = input_embeds.reshape(B, N, C)
 
@@ -161,8 +175,7 @@ def internvl2_forward(
             position_ids, dim=1, sp_group=sp_group)
         input_embeds = split_for_sequence_parallel(
             input_embeds, dim=1, sp_group=sp_group)
-        labels = split_for_sequence_parallel(
-            labels, dim=1, sp_group=sp_group)
+        labels = split_for_sequence_parallel(labels, dim=1, sp_group=sp_group)
         attention_mask = None  # 不需要
         attn_context.update_info('position_ids', position_ids)
 
@@ -185,7 +198,8 @@ def internvl2_forward(
         shift_labels = labels[..., 1:].contiguous()
         # Flatten the tokens
         loss_fct = CrossEntropyLoss()
-        shift_logits = shift_logits.view(-1, self.language_model.config.vocab_size)
+        shift_logits = shift_logits.view(-1,
+                                         self.language_model.config.vocab_size)
         shift_labels = shift_labels.view(-1)
         # Enable model parallelism
         shift_labels = shift_labels.to(shift_logits.device)
@@ -196,8 +210,8 @@ def internvl2_forward(
             loss = rescale_sp_loss(loss, shift_labels, sp_group=sp_group)
 
     if not return_dict:
-        output = (logits,) + outputs[1:]
-        return (loss,) + output if loss is not None else output
+        output = (logits, ) + outputs[1:]
+        return (loss, ) + output if loss is not None else output
 
     return CausalLMOutputWithPast(
         loss=loss,
@@ -208,21 +222,20 @@ def internvl2_forward(
     )
 
 
-
 def internvl2_hico_forward(
-            self,
-            pixel_values: torch.FloatTensor,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            image_flags: Optional[torch.LongTensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = None,
-            output_attentions: Optional[bool] = None,
-            output_hidden_states: Optional[bool] = None,
-            return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    self,
+    pixel_values: torch.FloatTensor,
+    input_ids: torch.LongTensor = None,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    image_flags: Optional[torch.LongTensor] = None,
+    past_key_values: Optional[List[torch.FloatTensor]] = None,
+    labels: Optional[torch.LongTensor] = None,
+    use_cache: Optional[bool] = None,
+    output_attentions: Optional[bool] = None,
+    output_hidden_states: Optional[bool] = None,
+    return_dict: Optional[bool] = None,
+) -> Union[Tuple, CausalLMOutputWithPast]:
     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
     sp_size = dist.get_world_size(get_sp_group())
@@ -236,17 +249,22 @@ def internvl2_hico_forward(
             pad_id = 0
             orig_len_input_ids = input_ids.shape[1]
             image_flags = image_flags.squeeze(-1)
-            assert input_ids.shape[0] == 1, 'batch size must be 1 for sequence parallel'
+            assert input_ids.shape[
+                0] == 1, 'batch size must be 1 for sequence parallel'
             # input_ids 均匀切分
             if orig_len_input_ids % sp_size != 0:  # 确保能均匀切
-                max_inputs_len = math.ceil(orig_len_input_ids / sp_size) * sp_size
-                _temp = input_ids.new_full((1, max_inputs_len - orig_len_input_ids), pad_id)
+                max_inputs_len = math.ceil(
+                    orig_len_input_ids / sp_size) * sp_size
+                _temp = input_ids.new_full(
+                    (1, max_inputs_len - orig_len_input_ids), pad_id)
                 input_ids_new = torch.cat([input_ids, _temp], dim=-1)
             else:
                 input_ids_new = input_ids
-            input_ids_list = torch.split(input_ids_new, input_ids_new.shape[1] // sp_size, dim=-1)
+            input_ids_list = torch.split(
+                input_ids_new, input_ids_new.shape[1] // sp_size, dim=-1)
             input_ids_rank_pre = input_ids_list[sp_rank].contiguous()
-            input_embeds_rank_pre = self.language_model.get_input_embeddings()(input_ids_rank_pre).clone()
+            input_embeds_rank_pre = self.language_model.get_input_embeddings()(
+                input_ids_rank_pre).clone()
 
             # torch.cuda.synchronize()
             # start_time = time.perf_counter()
@@ -257,7 +275,8 @@ def internvl2_hico_forward(
             input_embeds = torch.cat(input_embeds, dim=1)
             input_embeds = input_embeds[:, :orig_len_input_ids]
         else:
-            input_embeds = self.language_model.get_input_embeddings()(input_ids).clone()
+            input_embeds = self.language_model.get_input_embeddings()(
+                input_ids).clone()
 
         split_pixel_values = True
         # print(split_input_ids, split_pixel_values, os.environ.get('USE_CUSTOM_LOSS'), flush=True)
@@ -267,11 +286,13 @@ def internvl2_hico_forward(
             if orig_img_batch % sp_size != 0:  # 确保能均匀切
                 max_inputs_len = math.ceil(orig_img_batch / sp_size) * sp_size
                 pad_img_batch = max_inputs_len - orig_img_batch
-                pad_pixel_values_ = pixel_values.new_zeros(pad_img_batch, 3,
-                                                           pixel_values.shape[2],
-                                                           pixel_values.shape[3])
-                pixel_values = torch.cat([pixel_values, pad_pixel_values_], dim=0)
-            pixel_values = torch.split(pixel_values, len(pixel_values) // sp_size, dim=0)
+                pad_pixel_values_ = pixel_values.new_zeros(
+                    pad_img_batch, 3, pixel_values.shape[2],
+                    pixel_values.shape[3])
+                pixel_values = torch.cat([pixel_values, pad_pixel_values_],
+                                         dim=0)
+            pixel_values = torch.split(
+                pixel_values, len(pixel_values) // sp_size, dim=0)
             pixel_values = pixel_values[sp_rank].contiguous()
 
             vit_embeds = self.extract_feature_vit(pixel_values)
@@ -286,13 +307,16 @@ def internvl2_hico_forward(
             vit_embeds = torch.cat(vit_embeds, dim=0)[:orig_img_batch]
         else:
             vit_embeds = self.extract_feature_vit(pixel_values)
-        
-        vit_embeds = self.extract_feature_connector(vit_embeds, image_flags=image_flags)
+
+        vit_embeds = self.extract_feature_connector(
+            vit_embeds, image_flags=image_flags)
     else:
         image_flags = image_flags.squeeze(-1)
-        input_embeds = self.language_model.get_input_embeddings()(input_ids).clone()
+        input_embeds = self.language_model.get_input_embeddings()(
+            input_ids).clone()
         vit_embeds = self.extract_feature_vit(pixel_values)
-        vit_embeds = self.extract_feature_connector(vit_embeds, image_flags=image_flags)
+        vit_embeds = self.extract_feature_connector(
+            vit_embeds, image_flags=image_flags)
 
     # vit_batch_size = pixel_values.shape[0]
 
@@ -306,12 +330,17 @@ def internvl2_hico_forward(
     input_ids = input_ids.reshape(B * N)
     selected = (input_ids == self.img_context_token_id)
     try:
-        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)
+        input_embeds[
+            selected] = input_embeds[selected] * 0.0 + vit_embeds.reshape(
+                -1, C)
     except Exception as e:
         vit_embeds = vit_embeds.reshape(-1, C)
-        print(f'warning (in /mnt/petrelfs/lixinhao/lxh_exp/LongVideo/xtuner-hha_1028/xtuner/_lite/accelerate/dispatches/internvl2.py): {e}, input_embeds[selected].shape={input_embeds[selected].shape}, pixel_values.shape: {pixel_values.shape} sp_size={sp_size}, vit_embeds.shape={vit_embeds.shape}')
+        print(
+            f'warning (in /mnt/petrelfs/lixinhao/lxh_exp/LongVideo/xtuner-hha_1028/xtuner/_lite/accelerate/dispatches/internvl2.py): {e}, input_embeds[selected].shape={input_embeds[selected].shape}, pixel_values.shape: {pixel_values.shape} sp_size={sp_size}, vit_embeds.shape={vit_embeds.shape}'
+        )
         n_token = selected.sum()
-        input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
+        input_embeds[
+            selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
 
     input_embeds = input_embeds.reshape(B, N, C)
 
@@ -331,8 +360,7 @@ def internvl2_hico_forward(
             position_ids, dim=1, sp_group=sp_group)
         input_embeds = split_for_sequence_parallel(
             input_embeds, dim=1, sp_group=sp_group)
-        labels = split_for_sequence_parallel(
-            labels, dim=1, sp_group=sp_group)
+        labels = split_for_sequence_parallel(labels, dim=1, sp_group=sp_group)
         attention_mask = None  # 不需要
         attn_context.update_info('position_ids', position_ids)
 
@@ -355,7 +383,8 @@ def internvl2_hico_forward(
         shift_labels = labels[..., 1:].contiguous()
         # Flatten the tokens
         loss_fct = CrossEntropyLoss()
-        shift_logits = shift_logits.view(-1, self.language_model.config.vocab_size)
+        shift_logits = shift_logits.view(-1,
+                                         self.language_model.config.vocab_size)
         shift_labels = shift_labels.view(-1)
         # Enable model parallelism
         shift_labels = shift_labels.to(shift_logits.device)
@@ -366,8 +395,8 @@ def internvl2_hico_forward(
             loss = rescale_sp_loss(loss, shift_labels, sp_group=sp_group)
 
     if not return_dict:
-        output = (logits,) + outputs[1:]
-        return (loss,) + output if loss is not None else output
+        output = (logits, ) + outputs[1:]
+        return (loss, ) + output if loss is not None else output
 
     return CausalLMOutputWithPast(
         loss=loss,

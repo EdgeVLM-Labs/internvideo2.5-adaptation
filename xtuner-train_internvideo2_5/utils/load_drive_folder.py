@@ -1,6 +1,7 @@
-import os
-import io
 import argparse
+import io
+import os
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -9,6 +10,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 # Only requesting read access to your Drive
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
 
 def authenticate():
     """Authenticates the user and returns the Drive API service."""
@@ -24,7 +26,9 @@ def authenticate():
             creds.refresh(Request())
         else:
             if not os.path.exists('credentials.json'):
-                print("❌ Error: 'credentials.json' not found. Please download it from Google Cloud Console.")
+                print(
+                    "❌ Error: 'credentials.json' not found. Please download it from Google Cloud Console."
+                )
                 return None
             flow = InstalledAppFlow.from_client_secrets_file(
                 'credentials.json', SCOPES)
@@ -35,12 +39,13 @@ def authenticate():
 
     return build('drive', 'v3', credentials=creds)
 
+
 def list_all_files(service, folder_id):
     """Lists all files in the folder using pagination."""
     files = []
     page_token = None
 
-    print(f"🔍 Scanning folder ID: {folder_id}...")
+    print(f'🔍 Scanning folder ID: {folder_id}...')
 
     while True:
         # q parameter filters for files inside the specific folder and not in trash
@@ -48,9 +53,8 @@ def list_all_files(service, folder_id):
             q=f"'{folder_id}' in parents and trashed=false",
             spaces='drive',
             fields='nextPageToken, files(id, name, mimeType)',
-            pageSize=100, # API fetches 100 at a time
-            pageToken=page_token
-        ).execute()
+            pageSize=100,  # API fetches 100 at a time
+            pageToken=page_token).execute()
 
         items = response.get('files', [])
         files.extend(items)
@@ -60,6 +64,7 @@ def list_all_files(service, folder_id):
             break
 
     return files
+
 
 def download_file(service, file_id, file_name, output_folder):
     """Downloads a single file from Drive."""
@@ -71,29 +76,32 @@ def download_file(service, file_id, file_name, output_folder):
     downloader = MediaIoBaseDownload(fh, request)
 
     done = False
-    print(f"⬇️  Downloading: {file_name}")
+    print(f'⬇️  Downloading: {file_name}')
     try:
         while done is False:
             status, done = downloader.next_chunk()
             # Optional: Print progress for large files
             # print(f"Download {int(status.progress() * 100)}%.")
     except Exception as e:
-        print(f"❌ Error downloading {file_name}: {e}")
+        print(f'❌ Error downloading {file_name}: {e}')
         return False
 
     return True
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Download all files from a Google Drive folder via API.")
-    parser.add_argument("folder_url", help="The Google Drive Folder URL")
-    parser.add_argument("--output", default="downloads", help="Output directory")
+    parser = argparse.ArgumentParser(
+        description='Download all files from a Google Drive folder via API.')
+    parser.add_argument('folder_url', help='The Google Drive Folder URL')
+    parser.add_argument(
+        '--output', default='downloads', help='Output directory')
 
     args = parser.parse_args()
 
     # Extract Folder ID from URL
     # URL format: https://drive.google.com/drive/folders/18fnifZ0uh7rySsW6wLeZD2zz2mmIAtcK...
-    if "folders/" in args.folder_url:
-        folder_id = args.folder_url.split("folders/")[1].split("?")[0]
+    if 'folders/' in args.folder_url:
+        folder_id = args.folder_url.split('folders/')[1].split('?')[0]
     else:
         # Assume user passed the ID directly
         folder_id = args.folder_url
@@ -109,7 +117,7 @@ def main():
 
     # 2. List Files (Bypassing the 50 file limit via pagination)
     files = list_all_files(service, folder_id)
-    print(f"✅ Found {len(files)} files.")
+    print(f'✅ Found {len(files)} files.')
 
     # 3. Download Files
     for file in files:
@@ -120,7 +128,8 @@ def main():
 
         download_file(service, file['id'], file['name'], args.output)
 
-    print("\n🎉 All downloads complete.")
+    print('\n🎉 All downloads complete.')
+
 
 if __name__ == '__main__':
     main()

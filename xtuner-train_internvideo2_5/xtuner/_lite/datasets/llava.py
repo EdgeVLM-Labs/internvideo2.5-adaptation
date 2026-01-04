@@ -1,7 +1,7 @@
 import os
 
-import torch
 import numpy as np
+import torch
 from PIL import Image
 from torch.nn.utils.rnn import pad_sequence
 
@@ -91,9 +91,9 @@ class LlavaTokenizedDataset(torch.utils.data.Dataset):
             img = Image.open(url).convert('RGB')
             if self.pad_image_to_square:
                 img = expand2square(
-                        img,
-                        tuple(
-                            int(x * 255) for x in self.image_processor.image_mean))
+                    img,
+                    tuple(
+                        int(x * 255) for x in self.image_processor.image_mean))
             images.append(img)
 
         if len(images):
@@ -130,12 +130,17 @@ class LlavaTokenizedDataset(torch.utils.data.Dataset):
 
 class LlavaRawDataset(LlavaTokenizedDataset):
 
-    def __init__(self, dataset, image_processor, tokenize_fn, pad_image_to_square=False):
+    def __init__(self,
+                 dataset,
+                 image_processor,
+                 tokenize_fn,
+                 pad_image_to_square=False):
         # dataset is json raw file of items
         super().__init__(dataset, image_processor, pad_image_to_square)
 
         self.tokenize_fn = tokenize_fn
-        self.conv2length_text = {}  # using dict to speedup the calculation of token length
+        self.conv2length_text = {
+        }  # using dict to speedup the calculation of token length
         self.group_length = []
         print('Calculating the length of text data...')
         for data_item in dataset:
@@ -239,9 +244,9 @@ class SoftPackerForLlava(SoftPackerForText):
             img = Image.open(url).convert('RGB')
             if self.pad_image_to_square:
                 img = expand2square(
-                        img,
-                        tuple(
-                            int(x * 255) for x in self.image_processor.image_mean))
+                    img,
+                    tuple(
+                        int(x * 255) for x in self.image_processor.image_mean))
             images.append(img)
 
         if len(images):
@@ -355,7 +360,8 @@ class LlavaDatasetForNonPack(torch.utils.data.Dataset):
             self.dataset = load_jsonl(path)
 
         self.tokenize_fn = tokenize_fn
-        self.conv2length_text = {}  # using dict to speedup the calculation of token length
+        self.conv2length_text = {
+        }  # using dict to speedup the calculation of token length
         self.group_length = []
         print('Calculating the length of text data...')
         for data_item in self.dataset:
@@ -430,7 +436,9 @@ class NewLlavaTokenizeFunction():
         labels = tokenized['labels']
 
         if len(input_ids) > self.max_length:
-            print(f'The length of input_ids is {len(input_ids)} larger than {self.max_length}. Truncate it.')
+            print(
+                f'The length of input_ids is {len(input_ids)} larger than {self.max_length}. Truncate it.'
+            )
             input_ids = input_ids[:self.max_length]
             labels = labels[:self.max_length]
             tokenized['num_tokens'] = self.max_length
@@ -448,7 +456,8 @@ class NewLlavaTokenizeFunction():
                         img = expand2square(
                             img,
                             tuple(
-                                int(x * 255) for x in self.image_processor.image_mean))
+                                int(x * 255)
+                                for x in self.image_processor.image_mean))
                     images.append(img)
 
         if len(images):

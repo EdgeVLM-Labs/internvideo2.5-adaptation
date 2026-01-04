@@ -1,20 +1,22 @@
 import torch
 import torch.distributed as dist
-from flash_attn.flash_attn_interface import _flash_attn_forward, _flash_attn_backward
-from .utils import RingComm, update_out_and_lse, get_default_args
+from flash_attn.flash_attn_interface import (_flash_attn_backward,
+                                             _flash_attn_forward)
+
+from .utils import RingComm, get_default_args, update_out_and_lse
 
 
 def ring_flash_attn_forward(
-    process_group,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    softmax_scale,
-    dropout_p=0,
-    causal=True,
-    window_size=(-1, -1),
-    alibi_slopes=None,
-    deterministic=False,
+        process_group,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        softmax_scale,
+        dropout_p=0,
+        causal=True,
+        window_size=(-1, -1),
+        alibi_slopes=None,
+        deterministic=False,
 ):
     comm = RingComm(process_group)
 
@@ -31,20 +33,19 @@ def ring_flash_attn_forward(
 
         if not causal or step <= comm.rank:
             params = get_default_args(_flash_attn_forward).copy()
-            params.update(
-                {
-                    "q": q,
-                    "k": k,
-                    "v": v,
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": causal and step == 0,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "return_softmax": True and dropout_p > 0,
-                }
-            )
-            block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(**params)
+            params.update({
+                'q': q,
+                'k': k,
+                'v': v,
+                'dropout_p': dropout_p,
+                'softmax_scale': softmax_scale,
+                'causal': causal and step == 0,
+                'window_size': window_size,
+                'alibi_slopes': alibi_slopes,
+                'return_softmax': True and dropout_p > 0,
+            })
+            block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
+                **params)
             out, lse = update_out_and_lse(out, lse, block_out, block_lse)
 
         if step + 1 != comm.world_size:
@@ -58,19 +59,19 @@ def ring_flash_attn_forward(
 
 
 def ring_flash_attn_backward(
-    process_group,
-    dout,
-    q,
-    k,
-    v,
-    out,
-    softmax_lse,
-    softmax_scale,
-    dropout_p=0,
-    causal=True,
-    window_size=(-1, -1),
-    alibi_slopes=None,
-    deterministic=False,
+        process_group,
+        dout,
+        q,
+        k,
+        v,
+        out,
+        softmax_lse,
+        softmax_scale,
+        dropout_p=0,
+        causal=True,
+        window_size=(-1, -1),
+        alibi_slopes=None,
+        deterministic=False,
 ):
     kv_comm = RingComm(process_group)
     d_kv_comm = RingComm(process_group)
@@ -92,25 +93,23 @@ def ring_flash_attn_backward(
         if step <= kv_comm.rank or not causal:
             bwd_causal = causal and step == 0
             params = get_default_args(_flash_attn_backward).copy()
-            params.update(
-                {
-                    "dout": dout,
-                    "q": q,
-                    "k": k,
-                    "v": v,
-                    "out": out,
-                    "softmax_lse": softmax_lse,
-                    "dq": block_dq_buffer,
-                    "dk": block_dk_buffer,
-                    "dv": block_dv_buffer,
-                    "dropout_p": dropout_p,
-                    "softmax_scale": softmax_scale,
-                    "causal": bwd_causal,
-                    "window_size": window_size,
-                    "alibi_slopes": alibi_slopes,
-                    "deterministic": deterministic,
-                }
-            )
+            params.update({
+                'dout': dout,
+                'q': q,
+                'k': k,
+                'v': v,
+                'out': out,
+                'softmax_lse': softmax_lse,
+                'dq': block_dq_buffer,
+                'dk': block_dk_buffer,
+                'dv': block_dv_buffer,
+                'dropout_p': dropout_p,
+                'softmax_scale': softmax_scale,
+                'causal': bwd_causal,
+                'window_size': window_size,
+                'alibi_slopes': alibi_slopes,
+                'deterministic': deterministic,
+            })
             _flash_attn_backward(**params)
 
             if dq is None:
@@ -142,6 +141,7 @@ def ring_flash_attn_backward(
 
 
 class RingFlashAttnFunc(torch.autograd.Function):
+
     @staticmethod
     def forward(
         ctx,
@@ -158,7 +158,7 @@ class RingFlashAttnFunc(torch.autograd.Function):
         group,
     ):
         if softmax_scale is None:
-            softmax_scale = q.shape[-1] ** (-0.5)
+            softmax_scale = q.shape[-1]**(-0.5)
 
         assert alibi_slopes is None
         k = k.contiguous()

@@ -1,26 +1,28 @@
-import os
-from datetime import datetime
-import torch.distributed as dist
-from mmengine.utils import mkdir_or_exist, get_git_hash
-import sys
-from mmengine.utils.dl_utils import collect_env
-from collections import OrderedDict
-import shutil
-from ..parallel.new_setup import get_dp_mesh, get_world_mesh
-from .. import get_logger
-from ..parallel.sampler import LengthGroupedSampler, ParallelSampler
-from torch.utils.data import ConcatDataset, DataLoader, Dataset
-import numpy as np
-import random
+import copy
+import hashlib
 import json
 import math
-from concurrent.futures import ThreadPoolExecutor
-import hashlib
-from tqdm import tqdm
-from PIL import Image
-import copy
+import os
+import random
+import shutil
+import sys
+from collections import OrderedDict
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+import numpy as np
 import torch
+import torch.distributed as dist
+from mmengine.utils import get_git_hash, mkdir_or_exist
+from mmengine.utils.dl_utils import collect_env
+from PIL import Image
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
+from tqdm import tqdm
+
+from .. import get_logger
+from ..parallel.new_setup import get_dp_mesh, get_world_mesh
+from ..parallel.sampler import LengthGroupedSampler, ParallelSampler
 
 logger = get_logger()
 
@@ -28,8 +30,7 @@ _EXIF_ORIENT = 274  # exif 'Orientation' tag
 
 
 def _apply_exif_orientation(image):
-    """
-    Applies the exif orientation correctly.
+    """Applies the exif orientation correctly.
 
     This code exists per the bug:
       https://github.com/python-pillow/Pillow/issues/3973
@@ -46,7 +47,7 @@ def _apply_exif_orientation(image):
     Returns:
         (PIL.Image): the PIL image with exif orientation applied, if applicable
     """
-    if not hasattr(image, "getexif"):
+    if not hasattr(image, 'getexif'):
         return image
 
     try:
@@ -97,7 +98,9 @@ def check_args(args):
             with open(save_file) as f:
                 args.resume_from = f.read().strip()
         else:
-            logger.warning('Did not find last_checkpoint to be resumed. training from scratch.')
+            logger.warning(
+                'Did not find last_checkpoint to be resumed. training from scratch.'
+            )
             args.resume = False
     if args.resume:
         assert not args.checkpoint_drop_optimizer, '`resume` and `checkpoint_drop_optimizer` cannot be set at the same time.'
@@ -114,11 +117,13 @@ def check_args(args):
                          f'`mirco_batch_size`({args.mirco_batch_size})')
 
     if args.group_by_length and args.group_by_modality_length:
-        print('if you set both `group_by_length` and `group_by_modality_length`,'
-              ' the `group_by_modality_length` will be used.')
+        print(
+            'if you set both `group_by_length` and `group_by_modality_length`,'
+            ' the `group_by_modality_length` will be used.')
 
     if args.sp_size > 1 and args.mirco_batch_size > 1:
-        raise NotImplementedError('Not support mirco_batch_size>1 when sp_size')
+        raise NotImplementedError(
+            'Not support mirco_batch_size>1 when sp_size')
 
 
 def set_logger_envs(args):
@@ -165,7 +170,10 @@ def set_logger_envs(args):
 
 class SoftPackDataset(Dataset):
 
-    def __init__(self, datasets, pack_max_length=32768, concat_before_pack=True):
+    def __init__(self,
+                 datasets,
+                 pack_max_length=32768,
+                 concat_before_pack=True):
         if concat_before_pack:
             if dist.get_rank() == 0:
                 logger.info(f'[Dataset] Concat before pack.')
@@ -183,7 +191,8 @@ class SoftPackDataset(Dataset):
         orig_lens = [len(dset) for dset in datasets]
         for i, dataset in enumerate(self.datasets):
             _infos = self.get_pack_infos(dataset, i, num_tokens[i])
-            self.max_length_per_pack.extend([info['max_length_per_pack'] for info in _infos])
+            self.max_length_per_pack.extend(
+                [info['max_length_per_pack'] for info in _infos])
             pack_infos.extend(_infos)
         self.pack_infos = pack_infos
         assert len(self.pack_infos) == len(self.max_length_per_pack)
@@ -203,8 +212,9 @@ class SoftPackDataset(Dataset):
         pack_infos = []
         for shfl_i in inds:
             if num_tokens[shfl_i] > self.pack_max_length:
-                raise ValueError(f'one sample len {num_tokens[shfl_i]} > pack_max_length {self.pack_max_length}. '
-                                 'Please increase pack_max_length.')
+                raise ValueError(
+                    f'one sample len {num_tokens[shfl_i]} > pack_max_length {self.pack_max_length}. '
+                    'Please increase pack_max_length.')
 
             if num_tokens[shfl_i] + sum(length_buffer) <= self.pack_max_length:
                 item_buffer.append(shfl_i)
@@ -289,6 +299,7 @@ def expand2square(pil_img, background_color):
 
 
 class BaseOrigDataset(Dataset):
+
     def __init__(self,
                  data_name,
                  data,
@@ -312,38 +323,43 @@ class BaseOrigDataset(Dataset):
             self.root = data['root']
         else:
             self.root = data.get('media_root', '')
-        logger.info(f"{dist.get_rank()} ======= Start to process dataset: {os.path.basename(data['annotation'])}")
+        logger.info(
+            f"{dist.get_rank()} ======= Start to process dataset: {os.path.basename(data['annotation'])}"
+        )
 
         self.annotation = data['annotation']
         self._is_jsonl = self.annotation.endswith('.jsonl')
         self.raw_data = load_json_or_jsonl(self.annotation)
 
         ################################ lxh add
-        sampling_strategy = data.get("sampling_strategy", "all")
+        sampling_strategy = data.get('sampling_strategy', 'all')
         sampling_number = None
 
-        if ":" in sampling_strategy:
-            sampling_strategy, sampling_number = sampling_strategy.split(":")
-            if "%" in sampling_number:
-                sampling_number = math.ceil(int(sampling_number.split("%")[0]) * len(self.raw_data) / 100)
+        if ':' in sampling_strategy:
+            sampling_strategy, sampling_number = sampling_strategy.split(':')
+            if '%' in sampling_number:
+                sampling_number = math.ceil(
+                    int(sampling_number.split('%')[0]) * len(self.raw_data) /
+                    100)
             else:
                 sampling_number = int(sampling_number)
 
         # Apply the sampling strategy
-        if sampling_strategy == "first" and sampling_number is not None:
+        if sampling_strategy == 'first' and sampling_number is not None:
             self.raw_data = self.raw_data[:sampling_number]
-        elif sampling_strategy == "end" and sampling_number is not None:
+        elif sampling_strategy == 'end' and sampling_number is not None:
             self.raw_data = self.raw_data[-sampling_number:]
-        elif sampling_strategy == "random" and sampling_number is not None:
+        elif sampling_strategy == 'random' and sampling_number is not None:
             random.shuffle(self.raw_data)
             self.raw_data = self.raw_data[:sampling_number]
 
-        ################################ 
+        ################################
 
         repeat_time = data.get('repeat_time', 1)
         if repeat_time < 1:
             # If repeat_time is less than 1, select a portion of the data
-            self.raw_data = self.raw_data[:int(len(self.raw_data) * repeat_time)]
+            self.raw_data = self.raw_data[:int(
+                len(self.raw_data) * repeat_time)]
         if repeat_time > 1:
             assert isinstance(repeat_time, int)
             # Repeat the list if repeat_time is greater than 1
@@ -384,7 +400,9 @@ class BaseOrigDataset(Dataset):
         if 'num_tokens.npy' in os.listdir(file_cache_dir):
             _cached_file = os.path.join(file_cache_dir, 'num_tokens.npy')
             num_tokens = np.load(_cached_file)
-            logger.info(f"Load num_tokens from cache: {os.path.basename(self.annotation)}")
+            logger.info(
+                f'Load num_tokens from cache: {os.path.basename(self.annotation)}'
+            )
         else:
             num_tokens = self.count_tokens_for_pack(file_cache_dir)
         return num_tokens
@@ -432,12 +450,17 @@ class BaseOrigDataset(Dataset):
     def pre_tokenize_fn_for_pack(self, data):
         raise NotImplementedError
 
-    def process_text(self, conversations, media_type='image', image_grids=None):
+    def process_text(self,
+                     conversations,
+                     media_type='image',
+                     image_grids=None):
         while conversations and conversations[0]['from'] == 'gpt':
             # Skip the first one if it is from gpt
             conversations = conversations[1:]
 
-        assert len(conversations) % 2 == 0, f'Invalid conversation length: {len(conversations)}'
+        assert len(
+            conversations
+        ) % 2 == 0, f'Invalid conversation length: {len(conversations)}'
 
         input_ = ''
         out_conversation = []
@@ -462,30 +485,35 @@ class BaseOrigDataset(Dataset):
 
             if i == 0:
                 # 图片占位符只能在第一轮对话中出现
-                input_ = self._process_media_format_first_round(input_, media_type, image_grids)
+                input_ = self._process_media_format_first_round(
+                    input_, media_type, image_grids)
                 input_ = self.chat_template['system'] + input_
-                input_encode = self.tokenizer.encode(input_, add_special_tokens=True)
+                input_encode = self.tokenizer.encode(
+                    input_, add_special_tokens=True)
             else:
-                input_encode = self.tokenizer.encode(input_, add_special_tokens=False)
+                input_encode = self.tokenizer.encode(
+                    input_, add_special_tokens=False)
 
             input_ids += input_encode
             labels += [-100] * len(input_encode)
 
             output_text = single_turn_conversation.get('output', '')
-            output_encode = self.chat_template['assistant'].format(assistant=output_text)
-            output_encode = self.tokenizer.encode(output_encode, add_special_tokens=False)
+            output_encode = self.chat_template['assistant'].format(
+                assistant=output_text)
+            output_encode = self.tokenizer.encode(
+                output_encode, add_special_tokens=False)
             input_ids += output_encode
             labels += copy.deepcopy(output_encode)
 
         if len(input_ids) > self.max_length:
             input_ids = input_ids[:self.max_length]
             labels = labels[:self.max_length]
-            logger.info(
-                f'Warning: input_ids length({len(input_ids)}) '
-                f'is longer than max_length, cut to {self.max_length}')
+            logger.info(f'Warning: input_ids length({len(input_ids)}) '
+                        f'is longer than max_length, cut to {self.max_length}')
         return {'input_ids': input_ids, 'labels': labels}
 
-    def _process_media_format_first_round(self, input_, media_type, image_grids):
+    def _process_media_format_first_round(self, input_, media_type,
+                                          image_grids):
         raise NotImplementedError
 
     @property
@@ -502,9 +530,10 @@ class BaseOrigDataset(Dataset):
 def build_dataset(args, datasets):
     assert len(datasets) > 0, 'No dataset found.'
     if args.dset_pack:
-        train_dataset = SoftPackDataset(datasets,
-                                        pack_max_length=args.pack_max_length,
-                                        concat_before_pack=args.concat_before_pack)
+        train_dataset = SoftPackDataset(
+            datasets,
+            pack_max_length=args.pack_max_length,
+            concat_before_pack=args.concat_before_pack)
     else:
         train_dataset = ConcatDataset(datasets)
         if dist.get_rank() == 0:
@@ -519,22 +548,30 @@ def build_train_dataloader(args, train_dataset, collate_fn):
             length_property = 'max_length_per_pack'
         else:
             length_property = 'length'
-        sampler = LengthGroupedSampler(train_dataset, dp_mesh,
-                                       args.global_batch_size,
-                                       seed=args.seed,
-                                       length_property=length_property)
+        sampler = LengthGroupedSampler(
+            train_dataset,
+            dp_mesh,
+            args.global_batch_size,
+            seed=args.seed,
+            length_property=length_property)
     elif args.group_by_modality_length:
         # 当开启 soft packing 时，暂时不支持模态区分
         if args.dset_pack:
             raise NotImplementedError
         else:
-            sampler = LengthGroupedSampler(train_dataset, dp_mesh,
-                                           args.global_batch_size,
-                                           seed=args.seed,
-                                           length_property='modality_length')
+            sampler = LengthGroupedSampler(
+                train_dataset,
+                dp_mesh,
+                args.global_batch_size,
+                seed=args.seed,
+                length_property='modality_length')
     else:
         sampler = ParallelSampler(
-            train_dataset, dp_mesh, args.global_batch_size, seed=args.seed, shuffle=True)
+            train_dataset,
+            dp_mesh,
+            args.global_batch_size,
+            seed=args.seed,
+            shuffle=True)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -552,17 +589,17 @@ def build_train_dataloader(args, train_dataset, collate_fn):
 
 
 def _prepare_input(data, device='cuda'):
-    """
-        Prepares one `data` before feeding it to the model, be it a tensor or a nested list/dictionary of tensors.
-    """
+    """Prepares one `data` before feeding it to the model, be it a tensor or a
+    nested list/dictionary of tensors."""
     if isinstance(data, Mapping):
         return type(data)({k: _prepare_input(v) for k, v in data.items()})
     elif isinstance(data, (tuple, list)):
         return type(data)(_prepare_input(v) for v in data)
     elif isinstance(data, torch.Tensor):
-        kwargs = {"device": device}
+        kwargs = {'device': device}
         return data.to(non_blocking=True, **kwargs)
     return data
+
 
 def is_interval(step, total_steps, interval):
     return (step + 1) % interval == 0 or (step + 1) == total_steps

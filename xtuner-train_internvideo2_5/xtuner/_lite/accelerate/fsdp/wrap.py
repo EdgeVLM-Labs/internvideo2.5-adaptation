@@ -5,8 +5,12 @@ from xtuner._lite import get_logger
 logger = get_logger()
 # 如果没有加这个，则整个模型当一个 fsdp 模块，会导致显存增加，速度速度可能还会更慢
 _LAYERS = [
-    'InternLM2DecoderLayer', 'CLIPVisionModel', 'LlavaMultiModalProjector',
-    'LlamaDecoderLayer', 'Phi3DecoderLayer', 'InternVisionModel',
+    'InternLM2DecoderLayer',
+    'CLIPVisionModel',
+    'LlavaMultiModalProjector',
+    'LlamaDecoderLayer',
+    'Phi3DecoderLayer',
+    'InternVisionModel',
 ]
 # 'InternVisionEncoderLayer' 由于太小了，没有必要 wrap，直接对整个 model warp 就行
 

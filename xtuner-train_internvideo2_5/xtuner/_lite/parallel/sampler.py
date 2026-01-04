@@ -115,9 +115,9 @@ class ParallelSampler(Sampler):
 
 
 def get_length_grouped_indices11(max_lengths,
-                               group_batch_size,
-                               dp_size,
-                               seed=1024):
+                                 group_batch_size,
+                                 dp_size,
+                                 seed=1024):
     torch.manual_seed(seed)
     random.seed(seed)
 
@@ -142,7 +142,10 @@ def get_length_grouped_indices11(max_lengths,
     return output
 
 
-def get_length_grouped_indices(max_lengths, group_batch_size, generator=None, **kwargs):
+def get_length_grouped_indices(max_lengths,
+                               group_batch_size,
+                               generator=None,
+                               **kwargs):
 
     def process(lengths, group_batch_size, generator=None):
         indices = torch.randperm(len(lengths), generator=generator)

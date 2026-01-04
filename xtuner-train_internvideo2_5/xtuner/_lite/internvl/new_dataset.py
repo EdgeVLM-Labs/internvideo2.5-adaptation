@@ -13,38 +13,49 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 import transformers
-from .conversation import get_conv_template
 from PIL import Image
 from torch.utils.data import ConcatDataset, WeightedRandomSampler
 from torchvision.transforms.functional import InterpolationMode
 
+from xtuner._lite import get_logger
 from .constants import (CLIP_MEAN, CLIP_STD, IMAGENET_MEAN, IMAGENET_STD,
                         IMG_CONTEXT_TOKEN, IMG_END_TOKEN, IMG_START_TOKEN,
                         SIGLIP_MEAN, SIGLIP_STD)
-from xtuner._lite import get_logger
+from .conversation import get_conv_template
 
 try:
     from petrel_client.client import Client
     from petrel_client.common.config import Config
 except ImportError as E:
-    print('petrel_client is not installed. If you read data locally instead of from ceph, ignore it.')
+    print(
+        'petrel_client is not installed. If you read data locally instead of from ceph, ignore it.'
+    )
 import sys
+
 from .video_utils import VIDEO_READER_FUNCS
 
 logger = get_logger()
 
 
-def get_frame_indices(num_frames, vlen, sample='rand', fix_start=None, input_fps=1, max_num_frames=-1):
-    if sample in ['rand', 'middle']: # uniform sampling
+def get_frame_indices(num_frames,
+                      vlen,
+                      sample='rand',
+                      fix_start=None,
+                      input_fps=1,
+                      max_num_frames=-1):
+    if sample in ['rand', 'middle']:  # uniform sampling
         acc_samples = min(num_frames, vlen)
         # split the video into `acc_samples` intervals, and sample from each interval.
-        intervals = np.linspace(start=0, stop=vlen, num=acc_samples + 1).astype(int)
+        intervals = np.linspace(
+            start=0, stop=vlen, num=acc_samples + 1).astype(int)
         ranges = []
         for idx, interv in enumerate(intervals[:-1]):
             ranges.append((interv, intervals[idx + 1] - 1))
         if sample == 'rand':
             try:
-                frame_indices = [random.choice(range(x[0], x[1])) for x in ranges]
+                frame_indices = [
+                    random.choice(range(x[0], x[1])) for x in ranges
+                ]
             except:
                 frame_indices = np.random.permutation(vlen)[:acc_samples]
                 frame_indices.sort()
@@ -75,10 +86,12 @@ def get_frame_indices(num_frames, vlen, sample='rand', fix_start=None, input_fps
     return frame_indices
 
 
-def read_frames_gif(
-        video_path, num_frames, sample='rand', fix_start=None,
-        client=None, min_num_frames=4
-):
+def read_frames_gif(video_path,
+                    num_frames,
+                    sample='rand',
+                    fix_start=None,
+                    client=None,
+                    min_num_frames=4):
     import imageio
     if 's3://' in video_path:
         video_bytes = client.get(video_path)
@@ -89,8 +102,7 @@ def read_frames_gif(
 
     t_num_frames = np.random.randint(min_num_frames, num_frames + 1)
     frame_indices = get_frame_indices(
-        t_num_frames, vlen, sample=sample, fix_start=fix_start
-    )
+        t_num_frames, vlen, sample=sample, fix_start=fix_start)
     frames = []
     for index, frame in enumerate(gif):
         if index in frame_indices:
@@ -100,10 +112,13 @@ def read_frames_gif(
     return frames
 
 
-def read_frames_decord(
-        video_path, num_frames, sample='rand', fix_start=None,
-        client=None, clip=None, min_num_frames=4
-):
+def read_frames_decord(video_path,
+                       num_frames,
+                       sample='rand',
+                       fix_start=None,
+                       client=None,
+                       clip=None,
+                       min_num_frames=4):
     from decord import VideoReader
     if 's3://' in video_path:
         video_bytes = client.get(video_path)
@@ -123,12 +138,11 @@ def read_frames_decord(
     t_num_frames = np.random.randint(min_num_frames, num_frames + 1)
 
     frame_indices = get_frame_indices(
-        t_num_frames, vlen, sample=sample, fix_start=fix_start,
-        input_fps=fps
-    )
+        t_num_frames, vlen, sample=sample, fix_start=fix_start, input_fps=fps)
     if clip:
         frame_indices = [f + start_index for f in frame_indices]
-    frames = video_reader.get_batch(frame_indices).asnumpy()  # (T, H, W, C), np.uint8
+    frames = video_reader.get_batch(
+        frame_indices).asnumpy()  # (T, H, W, C), np.uint8
     frames = [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
     return frames
 
@@ -141,13 +155,17 @@ def extract_frame_number(filename):
 
 def sort_frames(frame_paths):
     # Extract filenames from each path and sort by their numeric part
-    return sorted(frame_paths, key=lambda x: extract_frame_number(os.path.basename(x)))
+    return sorted(
+        frame_paths, key=lambda x: extract_frame_number(os.path.basename(x)))
 
 
-def read_frames_folder(
-        video_path, num_frames, sample='rand', fix_start=None,
-        client=None, clip=None, min_num_frames=4
-):
+def read_frames_folder(video_path,
+                       num_frames,
+                       sample='rand',
+                       fix_start=None,
+                       client=None,
+                       clip=None,
+                       min_num_frames=4):
     if 's3://' in video_path:
         image_list = sort_frames(client.list(video_path))
         frames = []
@@ -168,18 +186,21 @@ def read_frames_folder(
 
     if vlen > t_num_frames:
         frame_indices = get_frame_indices(
-            t_num_frames, vlen, sample=sample, fix_start=fix_start
-        )
+            t_num_frames, vlen, sample=sample, fix_start=fix_start)
         frames = [frames[i] for i in frame_indices]
     return frames
 
 
 class WeightedConcatDataset(ConcatDataset):
+
     def __init__(self, datasets, weights):
         super().__init__(datasets)
         self.weights = torch.DoubleTensor(weights)
         self.total_size = sum(len(d) for d in datasets)
-        self.sampler = WeightedRandomSampler(weights=self.weights, num_samples=self.total_size, replacement=True)
+        self.sampler = WeightedRandomSampler(
+            weights=self.weights,
+            num_samples=self.total_size,
+            replacement=True)
 
     def __iter__(self):
         return iter(self.sampler)
@@ -194,7 +215,7 @@ def pil_loader(img_str):
     return img.convert('RGB')
 
 
-class TCSLoader(object):
+class TCSLoader:
 
     def __init__(self, conf_path, sc_config_key='sensecore'):
         print(f'[TCSLoader] config_path: {conf_path}')
@@ -202,9 +223,17 @@ class TCSLoader(object):
         self.client = Client(conf_path)
         self.sc_config_key = sc_config_key
         print('--> after Client(conf_path)')
-        self.time_msg = 'short' # NOTE　lxh 先写死
+        self.time_msg = 'short'  # NOTE　lxh 先写死
 
-    def __call__(self, fn, image_type='image', max_num_frames=-1, min_num_frames=4, sample='rand', clip=None, video_read_type='decord', local_num_frames=-1):
+    def __call__(self,
+                 fn,
+                 image_type='image',
+                 max_num_frames=-1,
+                 min_num_frames=4,
+                 sample='rand',
+                 clip=None,
+                 video_read_type='decord',
+                 local_num_frames=-1):
         if image_type == 'image':
             img_value_str = self.client.get(fn)
             img = pil_loader(img_value_str)
@@ -221,21 +250,32 @@ class TCSLoader(object):
             #     frames = read_frames_decord(fn, num_frames=max_num_frames, min_num_frames=min_num_frames,
             #                                 client=self.client, sample=sample, clip=clip)
 
-
-            frames, frame_indices, fps, duration = VIDEO_READER_FUNCS[video_read_type](video_path=fn, num_frames=max_num_frames, sample=sample, fix_start=None, min_num_frames=min_num_frames, max_num_frames=max_num_frames, client=self.client, clip=clip, local_num_frames=local_num_frames)
+            frames, frame_indices, fps, duration = VIDEO_READER_FUNCS[
+                video_read_type](
+                    video_path=fn,
+                    num_frames=max_num_frames,
+                    sample=sample,
+                    fix_start=None,
+                    min_num_frames=min_num_frames,
+                    max_num_frames=max_num_frames,
+                    client=self.client,
+                    clip=clip,
+                    local_num_frames=local_num_frames)
 
             sec = [str(round(f / fps, 1)) for f in frame_indices]
 
             if self.time_msg is not None and sec is not None:
                 if self.time_msg == 'short':
-                    msg = f"\nThe video lasts for {duration:.2f} seconds, and {len(sec)} frames are uniformly sampled from it. "
+                    msg = f'\nThe video lasts for {duration:.2f} seconds, and {len(sec)} frames are uniformly sampled from it. '
                 else:
                     # " " should be added in the start and end
                     msg = f"\nThe video lasts for {duration:.2f} seconds, and {len(sec)} frames are uniformly sampled at {', '.join(sec)} seconds. "
             else:
-                msg = ""
+                msg = ''
 
-            frames = [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
+            frames = [
+                Image.fromarray(frames[i]) for i in range(frames.shape[0])
+            ]
 
             return frames, msg
         else:
@@ -257,21 +297,31 @@ def expand2square(pil_img, background_color):
 
 
 def simulate_jpeg_degradation(quality):
+
     def jpeg_degrade(img):
         with io.BytesIO() as output:
             img.convert('RGB').save(output, format='JPEG', quality=quality)
-            output.seek(0)  # Move the reading cursor to the start of the stream
-            img_jpeg = Image.open(output).copy()  # Use .copy() to make sure the image is loaded in memory
+            output.seek(
+                0)  # Move the reading cursor to the start of the stream
+            img_jpeg = Image.open(output).copy(
+            )  # Use .copy() to make sure the image is loaded in memory
         return img_jpeg
+
     return jpeg_degrade
 
 
 # Define the JPEG compression quality range, pre-create all JPEG compression functions
 qualities = list(range(75, 101))
-jpeg_degrade_functions = {quality: simulate_jpeg_degradation(quality) for quality in qualities}
+jpeg_degrade_functions = {
+    quality: simulate_jpeg_degradation(quality)
+    for quality in qualities
+}
 
 
-def build_transform(is_train, input_size, pad2square=False, normalize_type='imagenet'):
+def build_transform(is_train,
+                    input_size,
+                    pad2square=False,
+                    normalize_type='imagenet'):
     if normalize_type == 'imagenet':
         MEAN, STD = IMAGENET_MEAN, IMAGENET_STD
     elif normalize_type == 'clip':
@@ -282,25 +332,35 @@ def build_transform(is_train, input_size, pad2square=False, normalize_type='imag
         raise NotImplementedError
     if is_train:  # use data augumentation
         transform = T.Compose([
-            T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-            T.RandomChoice([T.Lambda(jpeg_degrade_functions[quality]) for quality in qualities]),
-            T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+            T.Lambda(lambda img: img.convert('RGB')
+                     if img.mode != 'RGB' else img),
+            T.RandomChoice([
+                T.Lambda(jpeg_degrade_functions[quality])
+                for quality in qualities
+            ]),
+            T.Resize((input_size, input_size),
+                     interpolation=InterpolationMode.BICUBIC),
             T.ToTensor(),
             T.Normalize(mean=MEAN, std=STD)
         ])
     else:
         if pad2square is False:  # now we use this transform function by default
             transform = T.Compose([
-                T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-                T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+                T.Lambda(lambda img: img.convert('RGB')
+                         if img.mode != 'RGB' else img),
+                T.Resize((input_size, input_size),
+                         interpolation=InterpolationMode.BICUBIC),
                 T.ToTensor(),
                 T.Normalize(mean=MEAN, std=STD)
             ])
         else:
             transform = T.Compose([
-                T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-                T.Lambda(lambda img: expand2square(img, tuple(int(x * 255) for x in MEAN))),
-                T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+                T.Lambda(lambda img: img.convert('RGB')
+                         if img.mode != 'RGB' else img),
+                T.Lambda(lambda img: expand2square(
+                    img, tuple(int(x * 255) for x in MEAN))),
+                T.Resize((input_size, input_size),
+                         interpolation=InterpolationMode.BICUBIC),
                 T.ToTensor(),
                 T.Normalize(mean=MEAN, std=STD)
             ])
@@ -308,18 +368,16 @@ def build_transform(is_train, input_size, pad2square=False, normalize_type='imag
     return transform
 
 
-def preprocess(
-        template_name,
-        sources,
-        tokenizer: transformers.PreTrainedTokenizer,
-        num_image_token_list: list,
-        text_only: bool = False,
-        group_by_length: bool = False,
-        use_packed_ds: bool = False,
-        ds_name: str = None,
-        num_image: int = 1,
-        model_max_length = None
-) -> Dict:
+def preprocess(template_name,
+               sources,
+               tokenizer: transformers.PreTrainedTokenizer,
+               num_image_token_list: list,
+               text_only: bool = False,
+               group_by_length: bool = False,
+               use_packed_ds: bool = False,
+               ds_name: str = None,
+               num_image: int = 1,
+               model_max_length=None) -> Dict:
     if model_max_length is None:
         model_max_length = tokenizer.model_max_length
     conv = get_conv_template(template_name)
@@ -385,7 +443,7 @@ def preprocess(
                 instruction_len -= 1
 
             # Ignore the user instructions
-            target[cur_len: cur_len + instruction_len] = IGNORE_TOKEN_ID
+            target[cur_len:cur_len + instruction_len] = IGNORE_TOKEN_ID
             cur_len += turn_len
 
             if i != 0 and not tokenizer.legacy:
@@ -416,18 +474,16 @@ def preprocess(
     )
 
 
-def preprocess_mpt(
-        template_name,
-        sources,
-        tokenizer: transformers.PreTrainedTokenizer,
-        num_image_token_list: list,
-        text_only: bool = False,
-        group_by_length: bool = False,
-        use_packed_ds: bool = False,
-        ds_name: str = None,
-        num_image: int = 1,
-        model_max_length = None
-) -> Dict:
+def preprocess_mpt(template_name,
+                   sources,
+                   tokenizer: transformers.PreTrainedTokenizer,
+                   num_image_token_list: list,
+                   text_only: bool = False,
+                   group_by_length: bool = False,
+                   use_packed_ds: bool = False,
+                   ds_name: str = None,
+                   num_image: int = 1,
+                   model_max_length=None) -> Dict:
     if model_max_length is None:
         model_max_length = tokenizer.model_max_length
 
@@ -475,7 +531,8 @@ def preprocess_mpt(
         turns = conversation.split(conv.sep)
         re_turns = [conv.sep.join(turns[:3])]  # system + user + gpt
         for conv_idx in range(3, len(turns), 2):
-            re_turns.append(conv.sep.join(turns[conv_idx:conv_idx + 2]))  # user + gpt
+            re_turns.append(conv.sep.join(turns[conv_idx:conv_idx +
+                                                2]))  # user + gpt
         cur_len = 0
         target[:cur_len] = IGNORE_TOKEN_ID
         for i, turn in enumerate(re_turns):
@@ -490,7 +547,7 @@ def preprocess_mpt(
             instruction_len = len(tokenizer(parts[0]).input_ids)
 
             # Ignore the user instructions
-            target[cur_len: cur_len + instruction_len] = IGNORE_TOKEN_ID
+            target[cur_len:cur_len + instruction_len] = IGNORE_TOKEN_ID
             # print(f'[question {i}]', tokenizer.decode(input_ids[:, cur_len: cur_len + instruction_len][0]))
             # print(f'[answer {i}]', tokenizer.decode(input_ids[:, cur_len + instruction_len: cur_len + turn_len][0]))
             # print(f'[label {i}]', target[cur_len + instruction_len: cur_len + turn_len])
@@ -514,18 +571,16 @@ def preprocess_mpt(
     )
 
 
-def preprocess_phi3(
-        template_name,
-        sources,
-        tokenizer: transformers.PreTrainedTokenizer,
-        num_image_token_list: list,
-        text_only: bool = False,
-        group_by_length: bool = False,
-        use_packed_ds: bool = False,
-        ds_name: str = None,
-        num_image: int = 1,
-        model_max_length = None
-) -> Dict:
+def preprocess_phi3(template_name,
+                    sources,
+                    tokenizer: transformers.PreTrainedTokenizer,
+                    num_image_token_list: list,
+                    text_only: bool = False,
+                    group_by_length: bool = False,
+                    use_packed_ds: bool = False,
+                    ds_name: str = None,
+                    num_image: int = 1,
+                    model_max_length=None) -> Dict:
     if model_max_length is None:
         model_max_length = tokenizer.model_max_length
 
@@ -574,7 +629,8 @@ def preprocess_phi3(
         turns = conversation.split(conv.sep)
         re_turns = [conv.sep.join(turns[:3])]  # system + user + gpt
         for conv_idx in range(3, len(turns), 2):
-            re_turns.append(conv.sep.join(turns[conv_idx:conv_idx + 2]))  # user + gpt
+            re_turns.append(conv.sep.join(turns[conv_idx:conv_idx +
+                                                2]))  # user + gpt
         cur_len = 1
         target[:cur_len] = IGNORE_TOKEN_ID
         endoftext_id = tokenizer.convert_tokens_to_ids('<|endoftext|>')
@@ -598,7 +654,7 @@ def preprocess_phi3(
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
 
             # Ignore the user instructions
-            target[cur_len: cur_len + instruction_len] = IGNORE_TOKEN_ID
+            target[cur_len:cur_len + instruction_len] = IGNORE_TOKEN_ID
             # print(f'[question {i}]', tokenizer.decode(input_ids[:, cur_len: cur_len + instruction_len][0]))
             # print(f'[answer {i}]', tokenizer.decode(input_ids[:, cur_len + instruction_len: cur_len + turn_len][0]))
             # print(f'[label {i}]', target[cur_len + instruction_len: cur_len + turn_len])
@@ -627,18 +683,16 @@ def preprocess_phi3(
     )
 
 
-def preprocess_phi3_fast(
-        template_name,
-        sources,
-        tokenizer: transformers.PreTrainedTokenizer,
-        num_image_token_list: list,
-        text_only: bool = False,
-        group_by_length: bool = False,
-        use_packed_ds: bool = False,
-        ds_name: str = None,
-        num_image: int = 1,
-        model_max_length = None
-) -> Dict:
+def preprocess_phi3_fast(template_name,
+                         sources,
+                         tokenizer: transformers.PreTrainedTokenizer,
+                         num_image_token_list: list,
+                         text_only: bool = False,
+                         group_by_length: bool = False,
+                         use_packed_ds: bool = False,
+                         ds_name: str = None,
+                         num_image: int = 1,
+                         model_max_length=None) -> Dict:
     if model_max_length is None:
         model_max_length = tokenizer.model_max_length
     conv = get_conv_template(template_name)
@@ -655,13 +709,15 @@ def preprocess_phi3_fast(
             assert role == conv.roles[j % 2], f'{i}'
             conv.append_message(role, sentence['value'])
 
-    assert len(conv.messages) % 2 == 0, f'{ds_name}, {len(conv.messages)}, {conv.messages}'
+    assert len(conv.messages
+               ) % 2 == 0, f'{ds_name}, {len(conv.messages)}, {conv.messages}'
     inputs = conv.messages[::2]
     outputs = conv.messages[1::2]
 
     input_ids, labels = [], []
     # input_texts = ''
-    system_prompt = conv.system_template.format(system_message=conv.system_message)
+    system_prompt = conv.system_template.format(
+        system_message=conv.system_message)
     input_text = system_prompt + conv.sep
     # input_texts += input_text
     input_encode = tokenizer.encode(input_text, add_special_tokens=True)
@@ -717,18 +773,16 @@ def preprocess_phi3_fast(
     )
 
 
-def preprocess_internlm(
-        template_name,
-        sources,
-        tokenizer: transformers.PreTrainedTokenizer,
-        num_image_token_list: list,
-        text_only: bool = False,
-        group_by_length: bool = False,
-        use_packed_ds: bool = False,
-        ds_name: str = None,
-        num_image: int = 1,
-        model_max_length = None
-) -> Dict:
+def preprocess_internlm(template_name,
+                        sources,
+                        tokenizer: transformers.PreTrainedTokenizer,
+                        num_image_token_list: list,
+                        text_only: bool = False,
+                        group_by_length: bool = False,
+                        use_packed_ds: bool = False,
+                        ds_name: str = None,
+                        num_image: int = 1,
+                        model_max_length=None) -> Dict:
 
     if model_max_length is None:
         model_max_length = tokenizer.model_max_length
@@ -760,8 +814,6 @@ def preprocess_internlm(
             new_conversations.append(conversation)
         conversations = new_conversations
 
-    
-
     # Tokenize conversations
     input_ids = tokenizer(
         conversations,
@@ -775,13 +827,15 @@ def preprocess_internlm(
     # raise ValueError(f'input_ids')
 
     for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())  # 浦语里面 pad_token_id = eos_token_id
+        total_len = int(target.ne(
+            tokenizer.pad_token_id).sum())  # 浦语里面 pad_token_id = eos_token_id
         cur_len = 1
         target[:cur_len] = IGNORE_TOKEN_ID  # <s>
-        parts = conversation.split(conv.roles[1])  # [UNUSED_TOKEN_146]assistant\n
+        parts = conversation.split(
+            conv.roles[1])  # [UNUSED_TOKEN_146]assistant\n
         info = parts[0] + conv.roles[1]
         temp_len = len(tokenizer(info).input_ids) - 1  # 去除tokenizer的<s>
-        target[cur_len: cur_len + temp_len] = IGNORE_TOKEN_ID
+        target[cur_len:cur_len + temp_len] = IGNORE_TOKEN_ID
         cur_len = cur_len + temp_len
 
         for index in range(1, len(parts) - 1):
@@ -791,7 +845,7 @@ def preprocess_internlm(
             cur_len = cur_len + temp_len
             part = conv.roles[0] + part2 + conv.roles[1]
             temp_len = len(tokenizer(part).input_ids) - 1
-            target[cur_len: cur_len + temp_len] = IGNORE_TOKEN_ID
+            target[cur_len:cur_len + temp_len] = IGNORE_TOKEN_ID
             cur_len = cur_len + temp_len
         last_info = parts[-1]
         temp_len = len(tokenizer(last_info).input_ids) - 1
@@ -806,7 +860,9 @@ def preprocess_internlm(
         if cur_len < model_max_length:
             if cur_len != total_len:
                 target[:] = IGNORE_TOKEN_ID
-                print(f'WARNING: tokenization mismatch: {cur_len} vs. {total_len}. This dataset is {ds_name}.')
+                print(
+                    f'WARNING: tokenization mismatch: {cur_len} vs. {total_len}. This dataset is {ds_name}.'
+                )
                 sys.stdout.flush()
 
     return dict(
@@ -816,7 +872,8 @@ def preprocess_internlm(
     )
 
 
-def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
+def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height,
+                              image_size):
     best_ratio_diff = float('inf')
     best_ratio = (1, 1)
     area = width * height
@@ -833,19 +890,24 @@ def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_
     return best_ratio
 
 
-def dynamic_preprocess(image, min_num=1, max_num=6, image_size=448, use_thumbnail=False):
+def dynamic_preprocess(image,
+                       min_num=1,
+                       max_num=6,
+                       image_size=448,
+                       use_thumbnail=False):
     orig_width, orig_height = image.size
     aspect_ratio = orig_width / orig_height
 
     # calculate the existing image aspect ratio
-    target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
-        i * j <= max_num and i * j >= min_num)
+    target_ratios = {(i, j) for n in range(min_num, max_num + 1)
+                        for i in range(1, n + 1) for j in range(1, n + 1)
+                        if i * j <= max_num and i * j >= min_num}
     target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
 
     # find the closest aspect ratio to the target
-    target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+    target_aspect_ratio = find_closest_aspect_ratio(aspect_ratio,
+                                                    target_ratios, orig_width,
+                                                    orig_height, image_size)
 
     # calculate the target width and height
     target_width = image_size * target_aspect_ratio[0]
@@ -856,12 +918,10 @@ def dynamic_preprocess(image, min_num=1, max_num=6, image_size=448, use_thumbnai
     resized_img = image.resize((target_width, target_height))
     processed_images = []
     for i in range(blocks):
-        box = (
-            (i % (target_width // image_size)) * image_size,
-            (i // (target_width // image_size)) * image_size,
-            ((i % (target_width // image_size)) + 1) * image_size,
-            ((i // (target_width // image_size)) + 1) * image_size
-        )
+        box = ((i % (target_width // image_size)) * image_size,
+               (i // (target_width // image_size)) * image_size,
+               ((i % (target_width // image_size)) + 1) * image_size,
+               ((i // (target_width // image_size)) + 1) * image_size)
         # split the image
         split_img = resized_img.crop(box)
         processed_images.append(split_img)
@@ -872,19 +932,24 @@ def dynamic_preprocess(image, min_num=1, max_num=6, image_size=448, use_thumbnai
     return processed_images
 
 
-def dynamic_num_patch(size, min_num=1, max_num=6, image_size=448, use_thumbnail=False):
+def dynamic_num_patch(size,
+                      min_num=1,
+                      max_num=6,
+                      image_size=448,
+                      use_thumbnail=False):
     orig_width, orig_height = size
     aspect_ratio = orig_width / orig_height
 
     # calculate the existing image aspect ratio
-    target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
-        i * j <= max_num and i * j >= min_num)
+    target_ratios = {(i, j) for n in range(min_num, max_num + 1)
+                        for i in range(1, n + 1) for j in range(1, n + 1)
+                        if i * j <= max_num and i * j >= min_num}
     target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
 
     # find the closest aspect ratio to the target
-    target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+    target_aspect_ratio = find_closest_aspect_ratio(aspect_ratio,
+                                                    target_ratios, orig_width,
+                                                    orig_height, image_size)
 
     # calculate the target width and height
     blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
@@ -920,15 +985,19 @@ def concat_pad_data_collator(features, pad_id=0):
     # Ensure that tensor is created with the correct type
     # (it should be automatically the case, but let's make sure of it.)
     if 'label' in first and first['label'] is not None:
-        label = first['label'].item() if isinstance(first['label'], torch.Tensor) else first['label']
+        label = first['label'].item() if isinstance(
+            first['label'], torch.Tensor) else first['label']
         dtype = torch.long if isinstance(label, int) else torch.float
-        batch['labels'] = torch.tensor([f['label'] for f in features], dtype=dtype)
+        batch['labels'] = torch.tensor([f['label'] for f in features],
+                                       dtype=dtype)
     elif 'label_ids' in first and first['label_ids'] is not None:
         if isinstance(first['label_ids'], torch.Tensor):
             batch['labels'] = torch.stack([f['label_ids'] for f in features])
         else:
-            dtype = torch.long if isinstance(first['label_ids'][0], int) else torch.float
-            batch['labels'] = torch.tensor([f['label_ids'] for f in features], dtype=dtype)
+            dtype = torch.long if isinstance(first['label_ids'][0],
+                                             int) else torch.float
+            batch['labels'] = torch.tensor([f['label_ids'] for f in features],
+                                           dtype=dtype)
 
     # Handling of all other possible keys.
     # Again, we will use the first element to figure out which key/values are not None for this model.
@@ -951,10 +1020,10 @@ def concat_pad_data_collator(features, pad_id=0):
                 try:
                     batch[k] = torch.tensor([f[k] for f in features])
                 except Exception as e:
-                    error_msg = ""
+                    error_msg = ''
                     for i, f in enumerate(features):
-                        error_msg += f"{i} {f.keys()}hhhhh {k}.shape: {f[k]}"
-                    raise ValueError(f"error_msg: {error_msg} {e}")
+                        error_msg += f'{i} {f.keys()}hhhhh {k}.shape: {f[k]}'
+                    raise ValueError(f'error_msg: {error_msg} {e}')
 
         if k in ('pixel_values', 'image_flags'):
             if isinstance(v, torch.Tensor):

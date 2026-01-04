@@ -1,14 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import inspect
 import warnings
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from mmengine import MessageHub
 from transformers.cache_utils import Cache
-from transformers.models.qwen2_vl.modeling_qwen2_vl import (apply_multimodal_rotary_pos_emb, repeat_kv)
 from transformers.modeling_outputs import BaseModelOutputWithPast
-import torch.nn.functional as F
+from transformers.models.qwen2_vl.modeling_qwen2_vl import (
+    apply_multimodal_rotary_pos_emb, repeat_kv)
 
 from ._attention import flash_attn_wo_mask, varlen_flash_attn
 
@@ -32,7 +33,8 @@ def qwen2_vl_varlen_attn_forward(
     output_attentions: bool = False,
     use_cache: bool = False,
     cache_position: Optional[torch.LongTensor] = None,
-    position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None  # will become mandatory in v4.46
+    position_embeddings: Optional[Tuple[
+        torch.Tensor, torch.Tensor]] = None  # will become mandatory in v4.46
 ):
     is_training = self.training
 
@@ -66,8 +68,7 @@ def qwen2_vl_varlen_attn_forward(
     cos, sin = position_embeddings
 
     query_states, key_states = apply_multimodal_rotary_pos_emb(
-        query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
-    )
+        query_states, key_states, cos, sin, self.rope_scaling['mrope_section'])
 
     if past_key_value is not None:
         # Activate slicing cache only if the config has a value

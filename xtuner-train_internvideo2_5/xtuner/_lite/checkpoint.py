@@ -1,12 +1,11 @@
+from contextlib import contextmanager, nullcontext
 from typing import Any, Tuple
+
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import (
-    _checkpoint_without_reentrant_generator,
-    _DEFAULT_DETERMINISM_MODE,
-)
-from contextlib import nullcontext, contextmanager
 from torch.distributed._composable.contract import contract
+from torch.utils.checkpoint import (_DEFAULT_DETERMINISM_MODE,
+                                    _checkpoint_without_reentrant_generator)
 
 
 @contextmanager
@@ -26,21 +25,23 @@ def _no_hook(module: nn.Module):
 # Support **kwargs
 @contract()
 def checkpoint(module: nn.Module) -> nn.Module:
-    torch._C._log_api_usage_once("torch.distributed.checkpoint")
+    torch._C._log_api_usage_once('torch.distributed.checkpoint')
 
     def forward_pre_hook(module: nn.Module, *args) -> None:
         if checkpoint.state(module).enable_hook:
+
             def context_fns():
                 return nullcontext(), _no_hook(module)
 
             checkpoint.state(
                 module
             )._ac_generator = _checkpoint_without_reentrant_generator(
-                module, True, context_fns, _DEFAULT_DETERMINISM_MODE, False, *args[0], **args[1]
-            )
+                module, True, context_fns, _DEFAULT_DETERMINISM_MODE, False,
+                *args[0], **args[1])
             next(checkpoint.state(module)._ac_generator)
 
-    def forward_hook(module: nn.Module, inputs: Tuple[Any, ...], output: Any) -> Any:
+    def forward_hook(module: nn.Module, inputs: Tuple[Any, ...],
+                     output: Any) -> Any:
         if checkpoint.state(module).enable_hook:
             try:
                 next(checkpoint.state(module)._ac_generator)
@@ -48,7 +49,7 @@ def checkpoint(module: nn.Module) -> nn.Module:
                 pass
             else:
                 raise RuntimeError(
-                    "Expected non-reentrant activation checkpoint generator to be exhausted, but it was not!"
+                    'Expected non-reentrant activation checkpoint generator to be exhausted, but it was not!'
                 )
 
         #  Ensure that we no longer hold on to the generator. always_call=True helps ensure we
