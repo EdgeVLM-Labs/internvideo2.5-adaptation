@@ -1,28 +1,66 @@
 #!/bin/bash
 
-# QVED Finetuning - Quick Start
+# InternVideo2.5 QEVD-Fit-300k Finetuning - Quick Start
 # This script runs all necessary steps to start finetuning
 
 set -e  # Exit on error
 
 # Setup logging
-mkdir -p results
+mkdir -p work_dirs
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_FILE="results/finetune_${TIMESTAMP}.log"
+LOG_FILE="work_dirs/finetune_${TIMESTAMP}.log"
 echo "Logging all output to: $LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========================================="
-echo "QVED Finetuning - Quick Start"
+echo "InternVideo2.5 QEVD-Fit-300k Finetuning"
+echo "Quick Start Script"
 echo "========================================="
 
-# Step 1: Verify setup
-echo -e "\n[Step 1/4] Verifying setup..."
-bash scripts/verify_qved_setup.sh
+# Step 1: Check environment
+echo -e "\n[Step 1/5] Checking environment..."
+echo "Python: $(python --version)"
+echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+echo "CUDA Available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-# Step 2: Confirm to proceed
+# Step 2: Verify dataset
+echo -e "\n[Step 2/5] Verifying dataset..."
+if [ ! -f "data/diy_ft_data.json" ]; then
+    echo "Error: data/diy_ft_data.json not found!"
+    echo "Please run scripts/initialize_dataset.sh first."
+    exit 1
+fi
+
+if [ ! -f "data/annotaions/qevd_fit_300k_train.jsonl" ]; then
+    echo "Error: Training data not found!"
+    echo "Please run scripts/initialize_dataset.sh to prepare the dataset."
+    exit 1
+fi
+
+TRAIN_SAMPLES=$(wc -l < data/annotaions/qevd_fit_300k_train.jsonl)
+echo "✓ Found training data: $TRAIN_SAMPLES samples"
+
+if [ ! -d "dataset" ]; then
+    echo "Warning: dataset/ directory not found. Videos should be in dataset/ folder."
+fi
+
+# Step 3: Check model
+echo -e "\n[Step 3/5] Checking model..."
+MODEL_PATH="OpenGVLab/InternVideo2_5-Chat-8B"
+echo "Model: $MODEL_PATH"
+echo "Note: Model will be downloaded from HuggingFace if not cached locally."
+
+# Step 4: Confirm to proceed
 echo -e "\n========================================="
-echo -n "Setup verified! Start finetuning? (y/N): "
+echo "Ready to start finetuning!"
+echo "This will:"
+echo "  - Finetune InternVideo2.5-8B on QEVD-Fit-300k"
+echo "  - Use single GPU with DeepSpeed ZeRO-2"
+echo "  - Use QLoRA (4-bit) for memory efficiency"
+echo "  - Save checkpoints to work_dirs/qevd_fit_300k_internvideo2_5_r16/"
+echo ""
+echo -n "Continue? (y/N): "
 read -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -30,71 +68,37 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Step 3: Start finetuning
-echo -e "\n[Step 2/4] Activating conda environment and starting finetuning..."
+# Step 5: Start finetuning
+echo -e "\n[Step 5/5] Starting finetuning..."
 echo "========================================="
 
 # Run finetuning
 bash scripts/finetune_qved.sh
 
-# Generate training plots
-echo ""
-echo "Generating training plots..."
-python utils/plot_training_stats.py \
-  --log_file "$LOG_FILE" \
-  --model_name "qved_finetune_mobilevideogpt_0.5B"
-
+# Check if training completed successfully
 if [ $? -eq 0 ]; then
-    echo "✓ Training plots generated successfully!"
-    echo "  Location: plots/qved_finetune_mobilevideogpt_0.5B/"
-else
-    echo "⚠ Warning: Failed to generate plots. You can generate them later with:"
-    echo "  python utils/plot_training_stats.py --log_file $LOG_FILE"
-fi
+    echo -e "\n========================================="
+    echo "✓ Finetuning Complete!"
+    echo "========================================="
+    echo "Model saved to: work_dirs/qevd_fit_300k_internvideo2_5_r16/"
+    echo ""
 
-echo -e "\n========================================="
-echo "[Step 3/4] Finetuning complete!"
-echo "========================================="
-echo "Model saved to: results/qved_finetune_mobilevideogpt_0.5B/"
-echo ""
-echo "Finding latest checkpoint..."
-LATEST_CKPT=$(ls -d results/qved_finetune_mobilevideogpt_0.5B/checkpoint-* 2>/dev/null | sort -V | tail -1)
-if [ -n "$LATEST_CKPT" ]; then
-    echo "Latest checkpoint: $LATEST_CKPT"
-    MODEL_PATH="$LATEST_CKPT"
-else
-    echo "Note: LoRA adapters saved in results/qved_finetune_mobilevideogpt_0.5B/"
-    MODEL_PATH="results/qved_finetune_mobilevideogpt_0.5B"
-fi
-
-# Step 4: Upload to HuggingFace
-echo -e "\n========================================="
-echo "[Step 4/4] Upload to HuggingFace"
-echo "========================================="
-echo -n "Upload finetuned model to HuggingFace? (y/N): "
-read -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    HF_REPO_NAME="mobile-videogpt-finetune-${TIMESTAMP}"
-    echo "Uploading to EdgeVLM-Labs/${HF_REPO_NAME} (private)..."
-    python utils/hf_upload.py \
-        --model_path "$MODEL_PATH" \
-        --repo_name "$HF_REPO_NAME" \
-        --org "EdgeVLM-Labs" \
-        --private
-
-    if [ $? -eq 0 ]; then
-        echo "✓ Model uploaded successfully to HuggingFace!"
-        echo "  URL: https://huggingface.co/EdgeVLM-Labs/${HF_REPO_NAME}"
-    else
-        echo "⚠ Warning: Failed to upload model to HuggingFace"
-        echo "  You can upload manually later with:"
-        echo "  python utils/hf_upload.py --model_path $MODEL_PATH"
+    # Find latest checkpoint
+    LATEST_CKPT=$(ls -d work_dirs/qevd_fit_300k_internvideo2_5_r16/step_* 2>/dev/null | sort -V | tail -1)
+    if [ -n "$LATEST_CKPT" ]; then
+        echo "Latest checkpoint: $LATEST_CKPT"
     fi
+
+    echo ""
+    echo "Next steps:"
+    echo "  1. Test the model: bash scripts/run_inference.sh"
+    echo "  2. Upload to HuggingFace: python utils/hf_upload.py --model_path work_dirs/qevd_fit_300k_internvideo2_5_r16/"
 else
-    echo "Skipping HuggingFace upload."
-    echo "You can upload later with:"
-    echo "  python utils/hf_upload.py --model_path $MODEL_PATH"
+    echo -e "\n========================================="
+    echo "✗ Finetuning Failed!"
+    echo "========================================="
+    echo "Check the log file for errors: $LOG_FILE"
+    exit 1
 fi
 
 echo -e "\n========================================="

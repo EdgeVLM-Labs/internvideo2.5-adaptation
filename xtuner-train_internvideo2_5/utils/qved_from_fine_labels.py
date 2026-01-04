@@ -8,9 +8,10 @@ from collections import defaultdict
 BASE_DIR = Path("dataset")
 FINE_LABELS_JSON = BASE_DIR / "ground_truth.json"
 MANIFEST_JSON = BASE_DIR / "manifest.json"
-OUTPUT_TRAIN_JSON = BASE_DIR / "qved_train.json"
-OUTPUT_VAL_JSON = BASE_DIR / "qved_val.json"
-OUTPUT_TEST_JSON = BASE_DIR / "qved_test.json"
+# Output JSONL files for InternVideo2.5 training
+OUTPUT_TRAIN_JSONL = Path("data/annotaions/qevd_fit_300k_train.jsonl")
+OUTPUT_VAL_JSONL = Path("data/annotaions/qevd_fit_300k_val.jsonl")
+OUTPUT_TEST_JSONL = Path("data/annotaions/qevd_fit_300k_test.jsonl")
 USER_PROMPT_TEMPLATE = "Please evaluate the exercise form shown. What mistakes, if any, are present, and what corrections would you recommend?"
 
 # Dataset split ratios (adjustable)
@@ -114,17 +115,34 @@ def main():
     for item in test_data:
         item["split"] = "test"
 
-    # Write output JSONs
-    BASE_DIR.mkdir(parents=True, exist_ok=True)
+    # Write output JSONLs (one JSON object per line)
+    OUTPUT_TRAIN_JSONL.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(OUTPUT_TRAIN_JSON, 'w') as f:
-        json.dump(train_data, f, indent=2)
+    # Add duration field (estimate based on average video length)
+    # You should update this with actual video durations
+    for item in train_data:
+        item['duration'] = 30.0  # Default duration in seconds
+        del item['split']  # Remove split field, not needed in JSONL
 
-    with open(OUTPUT_VAL_JSON, 'w') as f:
-        json.dump(val_data, f, indent=2)
+    for item in val_data:
+        item['duration'] = 30.0
+        del item['split']
 
-    with open(OUTPUT_TEST_JSON, 'w') as f:
-        json.dump(test_data, f, indent=2)
+    for item in test_data:
+        item['duration'] = 30.0
+        del item['split']
+
+    with open(OUTPUT_TRAIN_JSONL, 'w') as f:
+        for item in train_data:
+            f.write(json.dumps(item) + '\n')
+
+    with open(OUTPUT_VAL_JSONL, 'w') as f:
+        for item in val_data:
+            f.write(json.dumps(item) + '\n')
+
+    with open(OUTPUT_TEST_JSONL, 'w') as f:
+        for item in test_data:
+            f.write(json.dumps(item) + '\n')
 
     print(f"\n{'='*60}")
     print(f"Dataset Split Summary")
@@ -135,11 +153,13 @@ def main():
     print(f"  Train: {len(train_data)} samples ({len(train_data)/total_count*100:.1f}%)")
     print(f"  Val:   {len(val_data)} samples ({len(val_data)/total_count*100:.1f}%)")
     print(f"  Test:  {len(test_data)} samples ({len(test_data)/total_count*100:.1f}%)")
-    print(f"\nOutput files:")
-    print(f"  Train: {OUTPUT_TRAIN_JSON}")
-    print(f"  Val:   {OUTPUT_VAL_JSON}")
-    print(f"  Test:  {OUTPUT_TEST_JSON}")
+    print(f"\nOutput files (JSONL format for InternVideo2.5):")
+    print(f"  Train: {OUTPUT_TRAIN_JSONL}")
+    print(f"  Val:   {OUTPUT_VAL_JSONL}")
+    print(f"  Test:  {OUTPUT_TEST_JSONL}")
     print(f"{'='*60}")
+    print(f"\nNote: Duration set to 30.0s by default.")
+    print(f"Update with actual video durations for better training.")
 
 if __name__ == "__main__":
     main()

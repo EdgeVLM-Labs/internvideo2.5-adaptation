@@ -1,147 +1,98 @@
 #!/bin/bash
 
-# QVED Finetuning Script for Mobile-VideoGPT-0.5B
-# This script performs Stage 3 (finetuning) only, using the pre-trained Mobile-VideoGPT-0.5B checkpoint
-# The checkpoint already includes pre-trained video and image projectors from Stages 1 and 2
+# InternVideo2.5 Finetuning Script for QEVD-Fit-300k Dataset
+# Single GPU training with DeepSpeed and QLoRA (4-bit quantization)
 
 # Environment setup
-export PYTHONPATH="./:$PYTHONPATH"
-export DATASET_DIR="$(pwd)/playground/data"
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+export CUDA_VISIBLE_DEVICES=0  # Single GPU
 
-# Suppress DeepSpeed hostfile warning for single-GPU training
-export PDSH_RCMD_TYPE=ssh
+# Suppress warnings
+export TOKENIZERS_PARALLELISM=false
 
-# WandB Configuration
-export WANDB_PROJECT="mobile-videogpt"
-export WANDB_ENTITY="fyp-21"
-export WANDB_NAME="qved-finetune-$(date +%Y%m%d_%H%M%S)"
+# Model Configuration
+MODEL_NAME="OpenGVLab/InternVideo2_5-Chat-8B"  # or your local path
+WORK_DIR="work_dirs/qevd_fit_300k_internvideo2_5_r16"
 
-# Model paths - using pre-trained Mobile-VideoGPT-0.5B checkpoint
-BASE_LLM_PATH="Amshaker/Mobile-VideoGPT-0.5B"
-VISION_TOWER="OpenGVLab/VideoMamba"
-IMAGE_VISION_TOWER="openai/clip-vit-base-patch16"
-PROJECTOR_TYPE="etp"
+# Create output directory
+mkdir -p "$WORK_DIR"
 
-# Output directory for finetuned model
-OUTPUT_DIR_PATH="results/qved_finetune_mobilevideogpt_0.5B"
-
-# Create output directory if it doesn't exist
-mkdir -p "$OUTPUT_DIR_PATH"
-
-# Training hyperparameters optimized for small dataset
-# EPOCHS=3                     # Reduced epochs
-# LR=2e-4                      # Increased learning rate
-# MM_PROJ_LR=2e-4              # Even lower for projection layers
-# LORA_R=64                    # LoRA rank
-# LORA_ALPHA=128               # LoRA alpha
-# BATCH=16                      # Smaller batch for stability
-# GACC=4                      # Gradient accumulation to simulate batch=64
-# MAXLEN=2048                  # Max sequence length
-
-EPOCHS=3                     # Reduced epochs
-LR=2e-4                      # Increased learning rate
-MM_PROJ_LR=1e-4              # Even lower for projection layers
-LORA_R=64                    # LoRA rank
-LORA_ALPHA=128               # LoRA alpha
-BATCH=8                      # Per device batch size
-GACC=8                       # Gradient accumulation to simulate batch=64
-MAXLEN=2048                  # Max sequence length
-
-# Video processing parameters
-FPS=1                        # Frame sampling rate
-MAX_FRAMES=16                # Maximum frames per video
+# Training Hyperparameters for Single GPU
+MICRO_BATCH_SIZE=1          # Batch size per forward pass (reduce if OOM)
+GLOBAL_BATCH_SIZE=8         # Total batch size (adjust based on GPU memory)
+EPOCHS=3                     # Training epochs
+LR=1e-5                      # Learning rate (conservative for finetuning)
+VIT_LR=5e-6                  # Vision tower learning rate (lower)
+CONNECTOR_LR=1e-5            # Connector learning rate
+MAX_LENGTH=8192              # Maximum sequence length
+MIN_FRAMES=8                 # Minimum frames per video
+MAX_FRAMES=8                 # Maximum frames per video
 
 echo "========================================="
-echo "QVED Dataset Finetuning Configuration"
+echo "InternVideo2.5 QEVD-Fit-300k Finetuning"
 echo "========================================="
-echo "Base Model: $BASE_LLM_PATH"
-echo "Output Dir: $OUTPUT_DIR_PATH"
+echo "Model: $MODEL_NAME"
+echo "Output: $WORK_DIR"
 echo "Epochs: $EPOCHS"
-echo "Learning Rate: $LR"
-echo "Batch Size: $BATCH x $GACC accumulation steps = effective batch of $((BATCH * GACC))"
-echo "FPS: $FPS"
-echo "Max Frames: $MAX_FRAMES"
+echo "Micro Batch: $MICRO_BATCH_SIZE"
+echo "Global Batch: $GLOBAL_BATCH_SIZE"
+echo "Learning Rates: LR=$LR, VIT_LR=$VIT_LR, CONNECTOR_LR=$CONNECTOR_LR"
+echo "Frames: MIN=$MIN_FRAMES, MAX=$MAX_FRAMES"
+echo "Max Length: $MAX_LENGTH"
 echo "========================================="
 
-# Save hyperparameters to a config file
-CONFIG_FILE="$OUTPUT_DIR_PATH/hyperparameters.json"
-cat <<EOF > "$CONFIG_FILE"
+# Save configuration
+cat <<EOF > "$WORK_DIR/training_config.json"
 {
-  "base_model": "$BASE_LLM_PATH",
-  "dataset": "QVED",
+  "model": "$MODEL_NAME",
+  "dataset": "QEVD-Fit-300k",
+  "micro_batch_size": $MICRO_BATCH_SIZE,
+  "global_batch_size": $GLOBAL_BATCH_SIZE,
   "epochs": $EPOCHS,
-  "learning_rate": $LR,
-  "mm_projector_lr": $MM_PROJ_LR,
-  "lora_r": $LORA_R,
-  "lora_alpha": $LORA_ALPHA,
-  "batch_size": $BATCH,
-  "gradient_accumulation_steps": $GACC,
-  "max_length": $MAXLEN,
-  "wandb_project": "$WANDB_PROJECT",
-  "wandb_entity": "$WANDB_ENTITY",
-  "wandb_run_name": "$WANDB_NAME"
+  "lr": $LR,
+  "vit_lr": $VIT_LR,
+  "connector_lr": $CONNECTOR_LR,
+  "max_length": $MAX_LENGTH,
+  "min_frames": $MIN_FRAMES,
+  "max_frames": $MAX_FRAMES,
+  "quantization": "QLoRA-4bit",
+  "gpu_count": 1
 }
 EOF
-echo "Hyperparameters saved to $CONFIG_FILE"
 
-# Stage 3: Fine-tuning on QVED dataset
-# The Mobile-VideoGPT-0.5B checkpoint already includes trained projectors,
-# so we don't need to specify pretrain_mm_mlp_adapter or pretrain_image_mm_mlp_adapter
-#
-# Note: Using ZeRO-2 instead of ZeRO-3 due to Mamba SSM compatibility issues
-# ZeRO-3 causes tensor initialization errors with mamba_ssm modules
+# Start Training with DeepSpeed ZeRO-2
+# Note: xtuner will handle the training through unify_internvl2_train_r16.py
+echo ""
+echo "Starting training..."
+echo ""
 
-deepspeed mobilevideogpt/train/train.py \
+NPROC_PER_NODE=1 xtuner train unify_internvl2_train_r16.py \
+  --model "$MODEL_NAME" \
+  --datasets data/diy_ft_data.json \
+  --work-dir "$WORK_DIR" \
   --deepspeed scripts/zero2.json \
-  --lora_enable True \
-  --lora_r $LORA_R \
-  --lora_alpha $LORA_ALPHA \
-  --lora_dropout 0.05 \
-  --lora_bias none \
-  --mm_projector_lr $MM_PROJ_LR \
-  --model_name_or_path "$BASE_LLM_PATH" \
-  --version qwen2_instruct \
-  --dataset_use QVED_TRAIN \
-  --dataset_val QVED_VAL \
-  --vision_tower "$VISION_TOWER" \
-  --image_vision_tower "$IMAGE_VISION_TOWER" \
-  --mm_projector_type "$PROJECTOR_TYPE" \
-  --image_mm_projector_type "$PROJECTOR_TYPE" \
-  --mm_vision_select_layer -2 \
-  --mm_use_im_start_end False \
-  --mm_use_im_patch_token False \
-  --image_aspect_ratio pad \
-  --group_by_modality_length True \
-  --bf16 True \
-  --tf32 True \
-  --fp16 False \
-  --gradient_checkpointing True \
-  --output_dir "$OUTPUT_DIR_PATH" \
-  --num_train_epochs $EPOCHS \
-  --per_device_train_batch_size $BATCH \
-  --per_device_eval_batch_size 8 \
-  --gradient_accumulation_steps $GACC \
-  --eval_strategy "steps" \
-  --eval_steps 70 \
-  --save_strategy "steps" \
-  --save_steps 70 \
-  --save_total_limit 3 \
-  --learning_rate $LR \
-  --weight_decay 0. \
-  --warmup_ratio 0.05 \
-  --lr_scheduler_type "cosine" \
-  --logging_steps 1 \
-  --model_max_length $MAXLEN \
-  --dataloader_num_workers 2 \
-  --lazy_preprocess True \
-  --report_to wandb \
-  --run_name $WANDB_NAME \
-  --num_select_k_frames_in_chunk 4 \
-  --topk True \
-  --fps $FPS \
-  --max_frames $MAX_FRAMES
+  --mirco-batch-size $MICRO_BATCH_SIZE \
+  --global-batch-size $GLOBAL_BATCH_SIZE \
+  --epochs $EPOCHS \
+  --lr $LR \
+  --vit_lr $VIT_LR \
+  --connector_lr $CONNECTOR_LR \
+  --max-length $MAX_LENGTH \
+  --min_num_frames $MIN_FRAMES \
+  --max_num_frames $MAX_FRAMES \
+  --shard-strategy zero2 \
+  --freeze-vit \
+  --checkpoint-interval 0.25 \
+  --log-interval 10 \
+  --seed 42
 
+echo ""
 echo "========================================="
-echo "Finetuning completed!"
-echo "Model saved to: $OUTPUT_DIR_PATH"
+echo "✓ Finetuning completed!"
+echo "========================================="
+echo "Model saved to: $WORK_DIR"
+echo ""
+echo "Next steps:"
+echo "  1. Test inference: bash scripts/run_inference.sh"
+echo "  2. Upload to HuggingFace Hub"
 echo "========================================="

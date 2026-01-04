@@ -1,10 +1,9 @@
 {
-    "caption_ft_data_3k": {
-        "root": "your_videos_path",
-        "annotation": "data/annotaions/ft_data_example.jsonl",
-        "length": 2111,
-        "data_augment": false,
-        "repeat_time": 1,
-        "sampling_strategy": "all"
-    }
+  "qevd_fit_300k": {
+    "root": "dataset",
+    "annotation": "data/annotaions/qevd_fit_300k_train.jsonl",
+    "data_augment": false,
+    "repeat_time": 1,
+    "video_read_type": "decord"
+  }
 }
