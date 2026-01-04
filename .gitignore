@@ -210,3 +210,4 @@ __marimo__/
 lmms-eval_videochat/
 llava-train_videochat/
 xtuner-eval_niah/
+xtuner-train_internvideo2_5/utils/credentials.json
