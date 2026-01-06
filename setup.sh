@@ -49,6 +49,9 @@ which nvcc
 
 conda activate internvideo
 
+pip install flash-attn --no-build-isolation
+python -c "import flash_attn; print(f'flash_attn version: {flash_attn.__version__}')"
+
 echo "=== CUDA Check ==="
 nvcc --version 2>/dev/null || echo "❌ nvcc not found"
 nvidia-smi 2>/dev/null || echo "❌ nvidia-smi not found"
