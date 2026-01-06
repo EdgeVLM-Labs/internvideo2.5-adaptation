@@ -12,9 +12,9 @@ export TOKENIZERS_PARALLELISM=false
 
 # Model Configuration
 # Choose one of these models:
-# - OpenGVLab/InternVideo2_5-Chat-8B (Recommended for video understanding)
-# - OpenGVLab/InternVL-2-5-HiCo-R16 (Alternative with high-quality features)
-MODEL_NAME="OpenGVLab/InternVideo2_5-Chat-8B"
+# - OpenGVLab/InternVL_2_5_HiCo_R16 (Recommended - matches ft_internvideo_2_5.sh)
+# - OpenGVLab/InternVL2-8B (Alternative)
+MODEL_NAME="OpenGVLab/InternVL_2_5_HiCo_R16"
 WORK_DIR="work_dirs/qevd_fit_300k_internvideo2_5_r16"
 
 # Create output directory
