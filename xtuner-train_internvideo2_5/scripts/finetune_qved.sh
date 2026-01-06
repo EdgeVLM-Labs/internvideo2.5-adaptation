@@ -64,12 +64,12 @@ cat <<EOF > "$WORK_DIR/training_config.json"
 EOF
 
 # Start Training with DeepSpeed ZeRO-2
-# Note: Directly calling the training script as done in ft_internvideo_2_5.sh
+# Note: Using torchrun for proper distributed initialization (even for single GPU)
 echo ""
 echo "Starting training..."
 echo ""
 
-python -u unify_internvl2_train_r16.py \
+torchrun --nproc_per_node=1 --master_port=29500 unify_internvl2_train_r16.py \
   --model "$MODEL_NAME" \
   --datasets data/diy_ft_data.json \
   --work-dir "$WORK_DIR" \

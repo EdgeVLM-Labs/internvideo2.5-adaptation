@@ -20,6 +20,7 @@ async-lru==2.0.5
 async-timeout==4.0.3
 asyncer==0.0.8
 attrs==25.4.0
+av==16.0.1
 babel==2.17.0
 backoff==2.2.1
 beautifulsoup4==4.14.3
@@ -43,6 +44,7 @@ cycler==0.12.1
 datasets==2.21.0
 debugpy==1.8.19
 decorator==5.2.1
+decord
 deepspeed==0.18.3
 defusedxml==0.7.1
 dill==0.3.7
@@ -177,7 +179,7 @@ packaging==24.1
 pandas==2.2.2
 pandocfilters==1.5.1
 parso==0.8.5
-peft==0.18.0
+peft==0.13.2
 pexpect==4.9.0
 phx-class-registry==4.1.0
 pillow==10.3.0

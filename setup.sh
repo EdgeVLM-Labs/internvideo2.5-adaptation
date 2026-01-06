@@ -37,6 +37,7 @@ cd internvideo2.5-adaptation/
 cd xtuner-train_internvideo2_5/
 
 pip install -r requirements_main.txt
+pip install torchaudio timm==0.9.16
 
 export PYTHONPATH="./:$PYTHONPATH"
 
