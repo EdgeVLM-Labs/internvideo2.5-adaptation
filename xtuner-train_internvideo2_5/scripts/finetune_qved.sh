@@ -64,19 +64,17 @@ cat <<EOF > "$WORK_DIR/training_config.json"
 EOF
 
 # Start Training with DeepSpeed ZeRO-2
-# Note: xtuner will handle the training through unify_internvl2_train_r16.py
+# Note: Directly calling the training script as done in ft_internvideo_2_5.sh
 echo ""
 echo "Starting training..."
 echo ""
 
-NPROC_PER_NODE=1 xtuner train unify_internvl2_train_r16.py \
+python -u unify_internvl2_train_r16.py \
   --model "$MODEL_NAME" \
   --datasets data/diy_ft_data.json \
   --work-dir "$WORK_DIR" \
-  --deepspeed scripts/zero2.json \
   --mirco-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \
-  --epochs $EPOCHS \
   --lr $LR \
   --vit_lr $VIT_LR \
   --connector_lr $CONNECTOR_LR \
@@ -84,10 +82,16 @@ NPROC_PER_NODE=1 xtuner train unify_internvl2_train_r16.py \
   --min_num_frames $MIN_FRAMES \
   --max_num_frames $MAX_FRAMES \
   --shard-strategy zero2 \
-  --freeze-vit \
-  --checkpoint-interval 0.25 \
+  --checkpoint-interval 500 \
   --log-interval 10 \
-  --seed 42
+  --seed 42 \
+  --num-workers 2 \
+  --wd 0.0 \
+  --use-fast-tokenizer \
+  --warmup-ratio 0.03 \
+  --checkpoint-drop-optimizer \
+  --group-by-length \
+  2>&1 | tee -a "$WORK_DIR/training_log.txt"
 
 echo ""
 echo "========================================="

@@ -18,7 +18,7 @@ source $HOME/miniconda/etc/profile.d/conda.sh
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-conda create --name=mobile_videogpt python=3.10
+conda create --name=internvideo python=3.10
 conda activate internvideo
 
 pip install --upgrade pip
@@ -34,8 +34,9 @@ pip install --upgrade pip
 echo "🧱 Installing base Python packages..."
 
 cd internvideo2.5-adaptation/
+cd xtuner-train_internvideo2_5/
 
-pip install -r xtuner-train_internvideo2_5/requirements_main.txt
+pip install -r requirements_main.txt
 
 export PYTHONPATH="./:$PYTHONPATH"
 
