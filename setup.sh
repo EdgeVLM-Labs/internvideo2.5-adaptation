@@ -49,7 +49,10 @@ which nvcc
 
 conda activate internvideo
 
-pip install flash-attn --no-build-isolation
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+pip install flash-attn==2.7.2.post1 --no-build-isolation
 python -c "import flash_attn; print(f'flash_attn version: {flash_attn.__version__}')"
 
 echo "=== CUDA Check ==="

@@ -20,16 +20,19 @@ WORK_DIR="work_dirs/qevd_fit_300k_internvideo2_5_r16"
 # Create output directory
 mkdir -p "$WORK_DIR"
 
-# Training Hyperparameters for Single GPU
-MICRO_BATCH_SIZE=1          # Batch size per forward pass (reduce if OOM)
-GLOBAL_BATCH_SIZE=8         # Total batch size (adjust based on GPU memory)
+# Training Hyperparameters for Single GPU (Memory Optimized)
+MICRO_BATCH_SIZE=1          # Batch size per forward pass
+GLOBAL_BATCH_SIZE=4         # Reduced from 8 to save memory
 EPOCHS=3                     # Training epochs
 LR=1e-5                      # Learning rate (conservative for finetuning)
 VIT_LR=5e-6                  # Vision tower learning rate (lower)
 CONNECTOR_LR=1e-5            # Connector learning rate
-MAX_LENGTH=8192              # Maximum sequence length
-MIN_FRAMES=8                 # Minimum frames per video
-MAX_FRAMES=8                 # Maximum frames per video
+MAX_LENGTH=2048              # Reduced from 8192 to save memory
+MIN_FRAMES=4                 # Reduced from 8 to save memory
+MAX_FRAMES=4                 # Reduced from 8 to save memory
+
+# Memory optimization environment variables
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "========================================="
 echo "InternVideo2.5 QEVD-Fit-300k Finetuning"
